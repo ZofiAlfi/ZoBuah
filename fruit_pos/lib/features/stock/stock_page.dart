@@ -71,6 +71,10 @@ class _StockPageState extends State<StockPage> {
               setState(() => _view = i == 0 ? 'stock' : 'movements');
               if (i == 0) _loadStock();
             },
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
+            indicatorColor: Colors.white,
+            indicatorWeight: 3,
             tabs: const [
               Tab(text: 'Stok Produk'),
               Tab(text: 'Riwayat Pergerakan'),
@@ -358,19 +362,27 @@ class _StockTile extends StatelessWidget {
             const SizedBox(height: 4),
             Row(
               children: [
-                Text(
-                  'Stok: ${Formatters.quantity(product.stock)} ${product.unit}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: isLow ? AppColors.danger : AppColors.primary,
+                Flexible(
+                  child: Text(
+                    'Stok: ${Formatters.quantity(product.stock)} ${product.unit}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isLow ? AppColors.danger : AppColors.primary,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  'Min: ${Formatters.quantity(product.minStock)} ${product.unit}',
-                  style: const TextStyle(
-                      fontSize: 12, color: AppColors.textSecondary),
+                Flexible(
+                  child: Text(
+                    'Min: ${Formatters.quantity(product.minStock)} ${product.unit}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary),
+                  ),
                 ),
               ],
             ),

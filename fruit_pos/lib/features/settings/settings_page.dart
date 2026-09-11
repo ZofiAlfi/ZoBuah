@@ -198,8 +198,11 @@ class SettingsPage extends StatelessWidget {
                 if (!isBos) {
                   final shouldExit = await ExitPinDialog.show(context);
                   if (shouldExit && context.mounted) {
-                    KioskService.leaveKiosk();
-                    await context.read<AuthState>().logout();
+                    // Pastikan keluar dari kiosk dulu, baru logout (anti nyangkut).
+                    await KioskService.leaveKiosk();
+                    if (context.mounted) {
+                      await context.read<AuthState>().logout();
+                    }
                   }
                 } else {
                   final confirm = await showDialog<bool>(

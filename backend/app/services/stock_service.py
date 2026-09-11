@@ -10,6 +10,28 @@ class InsufficientStockError(Exception):
     pass
 
 
+# ----- Konversi satuan untuk laporan kerusakan -----
+# Massa (gram sebagai basis)
+_UNIT_MASS_GRAMS = {"kg": 1000.0, "gram": 1.0}
+# Satuan hitung yang setara 1:1 (buah = pcs)
+_UNIT_COUNT = {"buah", "pcs"}
+
+
+def convert_quantity(value, from_unit, to_unit):
+    """Konversi kuantitas antar satuan. None jika kombinasi tidak dikenal."""
+    f = (from_unit or "").strip().lower()
+    t = (to_unit or "").strip().lower()
+    if not value or value <= 0:
+        return 0.0
+    if f == t:
+        return value
+    if f in _UNIT_MASS_GRAMS and t in _UNIT_MASS_GRAMS:
+        return round(value * _UNIT_MASS_GRAMS[f] / _UNIT_MASS_GRAMS[t], 4)
+    if f in _UNIT_COUNT and t in _UNIT_COUNT:
+        return round(value, 4)
+    return None
+
+
 def record_stock_movement(
     db: Session,
     product: Product,

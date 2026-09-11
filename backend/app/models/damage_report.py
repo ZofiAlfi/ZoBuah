@@ -14,6 +14,8 @@ class DamageReport(Base):
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
     quantity = Column(Numeric(12, 3), nullable=False)
     unit = Column(String(20), nullable=False)
+    # Kuantitas dalam satuan stok produk (hasil konversi unit pada saat lapor).
+    qty_in_base_unit = Column(Numeric(12, 3), nullable=True)
     reason = Column(String(50), nullable=False)
     description = Column(Text, nullable=True)
     status = Column(String(20), nullable=False, default="PENDING")
@@ -37,6 +39,7 @@ class DamageReport(Base):
             "product_name": self.product.name if self.product else None,
             "quantity": float(self.quantity),
             "unit": self.unit,
+            "qty_in_base_unit": float(self.qty_in_base_unit) if self.qty_in_base_unit is not None else None,
             "reason": self.reason,
             "description": self.description,
             "status": self.status,

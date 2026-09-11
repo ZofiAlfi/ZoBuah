@@ -49,8 +49,21 @@ class AuthRepository {
   }
 
   Future<void> logout() async {
-    await _secureStorage.deleteAll();
-    final prefs = await _prefsAsync;
-    await prefs.clear();
+    // cleanup lokal tidak boleh.memblokir UI selamanya.
+    try {
+      await _secureStorage.deleteAll().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // keystore bermasalah — lanjutkan, sesi akan tetap terhapus via prefs.
+      try {
+        await _secureStorage.deleteAll();
+      } catch (_) {}
+    }
+    try {
+      final prefs = await _prefsAsync;
+      await prefs.clear();
+    } catch (_) {}
+    try {
+      apiClient.setTokens(access: null, refresh: null);
+    } catch (_) {}
   }
 }

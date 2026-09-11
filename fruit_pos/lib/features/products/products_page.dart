@@ -135,16 +135,25 @@ class _ProductTile extends StatelessWidget {
             const SizedBox(height: 4),
             Row(
               children: [
-                Text('Jual ${Formatters.currency(product.sellingPrice)}',
-                    style: const TextStyle(
-                        fontSize: 13, color: AppColors.primary)),
+                Flexible(
+                  child: Text('Jual ${Formatters.currency(product.sellingPrice)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, color: AppColors.primary)),
+                ),
                 const SizedBox(width: 12),
-                Text('Stok ${Formatters.quantity(product.stock)} ${product.unit}',
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: product.isLowStock
-                            ? AppColors.danger
-                            : AppColors.textSecondary)),
+                Flexible(
+                  child: Text(
+                      'Stok ${Formatters.quantity(product.stock)} ${product.unit}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: product.isLowStock
+                              ? AppColors.danger
+                              : AppColors.textSecondary)),
+                ),
               ],
             ),
           ],

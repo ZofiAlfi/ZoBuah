@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../auth/auth_state.dart';
 import '../../core/constants.dart';
+import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../database/app_database.dart';
 import '../../models/damage_report.dart';
@@ -28,6 +29,7 @@ class _NewDamageReportPageState extends State<NewDamageReportPage> {
   String? _productId;
   final _quantityCtrl = TextEditingController();
   String _unit = 'kg';
+  String _baseUnit = 'kg';
   String _reason = 'LAINNYA';
   final _descCtrl = TextEditingController();
   final List<String> _photosBase64 = [];
@@ -37,7 +39,12 @@ class _NewDamageReportPageState extends State<NewDamageReportPage> {
   @override
   void initState() {
     super.initState();
+    _quantityCtrl.addListener(_onQtyChanged);
     _loadProducts();
+  }
+
+  void _onQtyChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadProducts() async {
@@ -181,7 +188,10 @@ class _NewDamageReportPageState extends State<NewDamageReportPage> {
                           final p = _products.cast<Product?>().firstWhere(
                               (e) => e?.id == v,
                               orElse: () => null);
-                          if (p != null) _unit = p.unit;
+                          if (p != null) {
+                            _unit = p.unit;
+                            _baseUnit = p.unit;
+                          }
                         });
                       },
                       validator: (v) => v == null ? 'Pilih produk' : null,
@@ -202,13 +212,20 @@ class _NewDamageReportPageState extends State<NewDamageReportPage> {
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
                       decoration: InputDecoration(
-                          labelText: 'Jumlah Rusak', suffixText: _unit),
+                        labelText: 'Jumlah Rusak',
+                        suffixText: _unit,
+                        helperText: _unitNote(),
+                      ),
                       validator: (v) {
                         final q = double.tryParse((v ?? '').replaceAll(',', '.'));
                         if (q == null || q <= 0) return 'Jumlah tidak valid';
                         return null;
                       },
                     ),
+                    if (_productId != null &&
+                        _unit.trim().toLowerCase() !=
+                            _baseUnit.trim().toLowerCase())
+                      _buildUnitWarning()!,
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       value: _reason,
@@ -301,6 +318,70 @@ class _NewDamageReportPageState extends State<NewDamageReportPage> {
 
   TextStyle _labelStyle() => const TextStyle(
       fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary);
+
+  double? _convert(double q) {
+    final f = _unit.trim().toLowerCase();
+    final t = _baseUnit.trim().toLowerCase();
+    if (f == t) return q;
+    const mass = {'kg': 1000.0, 'gram': 1.0};
+    if (mass.containsKey(f) && mass.containsKey(t)) {
+      return q * mass[f]! / mass[t]!;
+    }
+    const count = {'buah', 'pcs'};
+    if (count.contains(f) && count.contains(t)) return q;
+    return null;
+  }
+
+  String? _unitNote() {
+    final q = double.tryParse(_quantityCtrl.text.replaceAll(',', '.'));
+    if (q == null || q <= 0) return 'Satuan stok: $_baseUnit';
+    final conv = _convert(q);
+    if (conv == null) {
+      return 'Satuan "$_unit" tidak bisa dikonversi ke $_baseUnit';
+    }
+    if (_unit.trim().toLowerCase() == _baseUnit.trim().toLowerCase()) {
+      return 'Satuan stok: $_baseUnit';
+    }
+    return 'Setara dengan ${Formatters.quantity(conv)} $_baseUnit (dikonversi otomatis)';
+  }
+
+  Widget? _buildUnitWarning() {
+    final conv = _convert(
+        double.tryParse(_quantityCtrl.text.replaceAll(',', '.')) ?? 0);
+    final ok = conv != null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: (ok ? AppColors.info : AppColors.danger).withOpacity(0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              ok ? Icons.info_outline : Icons.warning_amber_rounded,
+              size: 18,
+              color: ok ? AppColors.primary : AppColors.danger,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                ok
+                    ? 'Jumlah akan otomatis dikonversi ke satuan stok ($_baseUnit) saat disetujui.'
+                    : 'Pilih satuan yang bisa dikonversi (kg/gram/buah/pcs) atau ubah satuan stok produk.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: ok ? AppColors.textPrimary : AppColors.danger,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   String _reasonLabel(String r) {
     switch (r) {

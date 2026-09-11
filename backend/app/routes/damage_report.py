@@ -15,7 +15,7 @@ from ..schemas.damage_report import (
     DamageReportApprove,
     DamageReportReject,
 )
-from ..services.stock_service import record_damage
+from ..services.stock_service import record_damage, convert_quantity
 from ..security import get_current_user, require_bos, log_audit
 from ..config import settings
 from ..services.storage import storage
@@ -41,12 +41,25 @@ def create_damage_report(
 
     employee_id = body.employee_id or current_user.id
 
+    # Konversi kuantitas ke satuan stok produk bila satuannya berbeda.
+    qty_in_base = None
+    if (body.unit or "").strip().lower() != (product.unit or "").strip().lower():
+        qty_in_base = convert_quantity(body.quantity, body.unit, product.unit)
+        if qty_in_base is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Satuan '{body.unit}' tidak bisa dikonversi ke satuan produk '{product.unit}' (kg/gram/buah/pcs)",
+            )
+    else:
+        qty_in_base = body.quantity
+
     report_id = body.id or _uuid.uuid4()
     report = DamageReport(
         id=report_id,
         product_id=body.product_id,
         quantity=body.quantity,
         unit=body.unit,
+        qty_in_base_unit=qty_in_base,
         reason=body.reason,
         description=body.description,
         status="PENDING",
@@ -141,7 +154,10 @@ def approve_damage_report(
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
 
     try:
-        record_damage(db, product, report.id, float(report.quantity), current_user)
+        qty_to_deduct = float(report.qty_in_base_unit)
+        if qty_to_deduct <= 0:
+            qty_to_deduct = float(report.quantity)
+        record_damage(db, product, report.id, qty_to_deduct, current_user)
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
