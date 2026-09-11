@@ -1,0 +1,84 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: fruitpos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fruitpos
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-fruitpos}
+      POSTGRES_DB: fruitpos
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/backup:/backup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fruitpos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fruitpos-net
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fruitpos-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://fruitpos:${DB_PASSWORD:-fruitpos}@db:5432/fruitpos
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      DEBUG: "False"
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads_data:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - fruitpos-net
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:alpine
+    container_name: fruitpos-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certbot/conf:/etc/letsencrypt
+      - ./deploy/certbot/www:/var/www/certbot
+      - uploads_data:/data/uploads:ro
+    depends_on:
+      - api
+    networks:
+      - fruitpos-net
+
+  backup:
+    image: alpine:3.18
+    container_name: fruitpos-backup
+    restart: unless-stopped
+    entrypoint: >
+      /bin/sh -c "
+      apk add --no-cache postgresql-client &&
+      echo '*/30 2 * * * PGPASSWORD=$${DB_PASSWORD:-fruitpos} pg_dump -h db -U fruitpos fruitpos | gzip > /backup/fruitpos_$(date +\\%Y\\%m\\%d_\\%H\\%M).sql.gz && find /backup -name '*.sql.gz' -mtime +7 -delete' | crontab - && crond -f"
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD:-fruitpos}
+    volumes:
+      - ./deploy/backup:/backup
+    depends_on:
+      - db
+    networks:
+      - fruitpos-net
+
+volumes:
+  pgdata:
+  uploads_data:
+
+networks:
+  fruitpos-net:
+    driver: bridge

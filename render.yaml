@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: fruitpos-api
+    runtime: docker
+    repo: https://github.com/USERNAME/PROJECTBUAH # ganti dengan repo Anda (atau buat manual dari dashboard)
+    rootDir: /backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: DEBUG
+        value: "False"
+      - key: STORAGE
+        value: s3
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_PUBLIC_BASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "5"

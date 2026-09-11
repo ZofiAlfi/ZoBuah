@@ -1,0 +1,38 @@
+# ===== Root .gitignore for Fruit POS =====
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+backend/.env
+backend/uploads/
+*.log
+
+# Docker
+# .env untuk deployment Oracle/Render
+.env
+.env.local
+deploy/certbot/
+deploy/backup/*.sql.gz
+deploy/backup/*.dump
+
+# Graphify & diagnosa
+graphify-out/
+q.xml
+
+# Render
+render.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Node / misc
+node_modules/
+
+# Flutter build artifacts are handled in fruit_pos/.gitignore
