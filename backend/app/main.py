@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+import mimetypes
 import time
 
 from .config import settings
 from .database import Base, engine, SessionLocal
+from .services.storage import storage
 from .routes import (
     auth,
     product,
@@ -86,6 +88,17 @@ app.include_router(exit.router, prefix="/api/v1")
 
 if settings.STORAGE != "s3" and Path(settings.UPLOAD_DIR).exists():
     app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+else:
+
+    @app.get("/uploads/{key:path}")
+    def uploads_proxy(key: str):
+        """Mode s3: stream file dari Backblaze B2 (bucket tidak perlu publik)."""
+        try:
+            data = storage.read_bytes(key)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="File tidak ditemukan")
+        media_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
+        return Response(content=data, media_type=media_type)
 
 
 def create_tables():

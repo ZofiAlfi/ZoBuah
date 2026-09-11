@@ -4,9 +4,9 @@ Mode "local": simpan di UPLOAD_DIR (dipakai saat development).
 Mode "s3": simpan ke Backblaze B2 (atau S3-compatible) lewat boto3.
 
 Kunci (key) selalu relatif, contoh "product/<id>.png" / "damage/<id>_0.jpg".
-Url() menghasilkan URL absolut untuk ditampilkan app:
-  - local -> "/uploads/<key>" (di-mount StaticFiles di main.py)
-  - s3    -> S3_PUBLIC_BASE_URL + "/" + key
+Url() menghasilkan path virtual "/uploads/<key>" untuk kedua mode; saat mode
+"s3" endpoint /uploads di-main() mem-proxy dari B2 sehingga bucket tidak perlu
+publik dan app selalu memakai baseUrl + /uploads/...
 """
 
 from pathlib import Path
@@ -18,11 +18,14 @@ class BaseStorage:
     def save_bytes(self, key: str, data: bytes, content_type: str) -> None:
         raise NotImplementedError
 
+    def read_bytes(self, key: str) -> bytes:
+        raise NotImplementedError
+
     def delete(self, key: str) -> None:
         raise NotImplementedError
 
     def url(self, key: str) -> str:
-        raise NotImplementedError
+        return f"/uploads/{key}"
 
 
 class LocalStorage(BaseStorage):
@@ -39,13 +42,16 @@ class LocalStorage(BaseStorage):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
 
+    def read_bytes(self, key: str) -> bytes:
+        target = self._path(key)
+        if not target.is_file():
+            raise FileNotFoundError(key)
+        return target.read_bytes()
+
     def delete(self, key: str) -> None:
         target = self._path(key)
         if target.is_file():
             target.unlink(missing_ok=True)
-
-    def url(self, key: str) -> str:
-        return f"/uploads/{key}"
 
 
 class S3Storage(BaseStorage):
@@ -69,11 +75,17 @@ class S3Storage(BaseStorage):
             ContentType=content_type,
         )
 
+    def read_bytes(self, key: str) -> bytes:
+        try:
+            obj = self._client.get_object(Bucket=settings.S3_BUCKET, Key=key)
+        except Exception as e:
+            if getattr(e, "response", {}).get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                raise FileNotFoundError(key) from e
+            raise
+        return obj["Body"].read()
+
     def delete(self, key: str) -> None:
         self._client.delete_object(Bucket=settings.S3_BUCKET, Key=key)
-
-    def url(self, key: str) -> str:
-        return f"{settings.S3_PUBLIC_BASE_URL.rstrip('/')}/{key}"
 
 
 def get_storage() -> BaseStorage:

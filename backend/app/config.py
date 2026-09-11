@@ -33,9 +33,6 @@ class Settings:
     S3_ACCESS_KEY_ID: str = os.getenv("S3_ACCESS_KEY_ID", "")
     S3_SECRET_ACCESS_KEY: str = os.getenv("S3_SECRET_ACCESS_KEY", "")
     S3_BUCKET: str = os.getenv("S3_BUCKET", "")
-    # URL publik bucket B2 (bucket "public"), contoh:
-    #   https://<bucket>.s3.<region>.backblazeb2.com
-    S3_PUBLIC_BASE_URL: str = os.getenv("S3_PUBLIC_BASE_URL", "")
 
 
 settings = Settings()

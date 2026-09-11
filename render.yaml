@@ -23,8 +23,6 @@ services:
         sync: false
       - key: S3_BUCKET
         sync: false
-      - key: S3_PUBLIC_BASE_URL
-        sync: false
       - key: ALLOWED_ORIGINS
         value: "*"
       - key: MAX_UPLOAD_SIZE_MB
