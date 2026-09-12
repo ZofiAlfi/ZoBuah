@@ -419,11 +419,44 @@ class _StockMovementsViewState extends State<StockMovementsView> {
   bool _loading = true;
   List<StockMovement> _movements = [];
   String? _error;
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _search = '';
+  String _type = '';
+
+  static const List<({String value, String label})> _typeFilters = [
+    (value: '', label: 'Semua'),
+    (value: 'STOCK_IN', label: 'Stok Masuk'),
+    (value: 'SALE', label: 'Terjual'),
+    (value: 'DAMAGE', label: 'Rusak'),
+    (value: 'ADJUSTMENT', label: 'Penyesuaian'),
+    (value: 'RETURN', label: 'Retur'),
+  ];
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<StockMovement> get _filtered {
+    final q = _search.trim().toLowerCase();
+    return _movements.where((m) {
+      if (_type.isNotEmpty && m.movementType != _type) return false;
+      if (q.isEmpty) return true;
+      final hay = [
+        m.productName ?? '',
+        m.productId,
+        m.movementType,
+        m.notes ?? '',
+      ].join(' ').toLowerCase();
+      return hay.contains(q);
+    }).toList();
   }
 
   Future<void> _load() async {
@@ -446,17 +479,78 @@ class _StockMovementsViewState extends State<StockMovementsView> {
     if (_loading) return const LoadingView();
     if (_error != null) return ErrorView(message: _error!, onRetry: _load);
 
-    return _movements.isEmpty
-        ? const EmptyView(message: 'Belum ada pergerakan stok')
-        : RefreshIndicator(
-            onRefresh: _load,
-            child: ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: _movements.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (ctx, i) => _MovementTile(movement: _movements[i]),
+    final list = _filtered;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _search = v),
+            decoration: const InputDecoration(
+              hintText: 'Cari produk, jenis, catatan...',
+              prefixIcon: Icon(Icons.search),
             ),
-          );
+          ),
+        ),
+        SizedBox(
+          height: 40,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                for (final f in _typeFilters)
+                  _FilterChip(
+                    label: f.label,
+                    selected: _type == f.value,
+                    onTap: () => setState(() => _type = f.value),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child: list.isEmpty
+              ? EmptyView(
+                  message: _movements.isEmpty
+                      ? 'Belum ada pergerakan stok'
+                      : 'Tidak ada yang cocok',
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView.separated(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: list.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (ctx, i) =>
+                        _MovementTile(movement: list[i]),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _FilterChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: FilterChip(
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        visualDensity: VisualDensity.compact,
+      ),
+    );
   }
 }
 

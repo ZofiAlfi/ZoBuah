@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../database/app_database.dart';
+import '../../models/category.dart';
 import '../../models/product.dart';
 import '../../shared/widgets/common_widgets.dart';
 import 'product_form_page.dart';
@@ -19,6 +20,8 @@ class _ProductsPageState extends State<ProductsPage> {
   String? _error;
   List<Product> _products = [];
   String _search = '';
+  List<Category> _categories = [];
+  String _category = '';
 
   @override
   void initState() {
@@ -43,7 +46,12 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _reloadData() async {
     final db = AppDatabase.instance;
     _products = await db.products.getAllProducts(search: _search);
+    _categories = await db.products.getAllCategories();
   }
+
+  List<Product> get _filtered => _products
+      .where((p) => _category.isEmpty || p.categoryName == _category)
+      .toList();
 
   @override
   Widget build(BuildContext context) {
@@ -82,32 +90,78 @@ class _ProductsPageState extends State<ProductsPage> {
                             prefixIcon: Icon(Icons.search),
                           ),
                         ),
-                      ),
-                      Expanded(
-                        child: _products.isEmpty
-                            ? const EmptyView(message: 'Belum ada produk')
-                            : ListView.separated(
-                                padding: const EdgeInsets.all(16),
-                                itemCount: _products.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(height: 8),
-                                itemBuilder: (ctx, i) => _ProductTile(
-                                  product: _products[i],
-                                  onTap: () async {
-                                    final created = await Navigator.push<bool>(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) => ProductFormPage(
-                                              product: _products[i])),
-                                    );
-                                    if (created == true) _load();
-                                  },
-                                ),
+),
+                        if (_categories.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 0, 0),
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  _FilterChip(
+                                    label: 'Semua',
+                                    selected: _category.isEmpty,
+                                    onTap: () =>
+                                        setState(() => _category = ''),
+                                  ),
+                                  for (final c in _categories)
+                                    _FilterChip(
+                                      label: c.name,
+                                      selected: _category == c.name,
+                                      onTap: () => setState(
+                                          () => _category = c.name),
+                                    ),
+                                ],
                               ),
-                      ),
+                            ),
+                          ),
+                        Expanded(
+                          child: _filtered.isEmpty
+                              ? const EmptyView(message: 'Belum ada produk')
+                              : ListView.separated(
+                                  padding: const EdgeInsets.all(16),
+                                  itemCount: _filtered.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 8),
+                                  itemBuilder: (ctx, i) => _ProductTile(
+                                    product: _filtered[i],
+                                    onTap: () async {
+                                      final created =
+                                          await Navigator.push<bool>(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (_) => ProductFormPage(
+                                                product: _filtered[i])),
+                                      );
+                                      if (created == true) _load();
+                                    },
+                                  ),
+                                ),
+                        ),
                     ],
                   ),
                 ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _FilterChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: FilterChip(
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        visualDensity: VisualDensity.compact,
+      ),
     );
   }
 }

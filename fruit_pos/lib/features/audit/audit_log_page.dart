@@ -20,6 +20,8 @@ class _AuditLogPageState extends State<AuditLogPage> {
   List<Map<String, dynamic>> _logs = [];
   String? _error;
   String _filterAction = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _search = '';
 
   static const List<String> _actionFilters = [
     '',
@@ -44,6 +46,26 @@ class _AuditLogPageState extends State<AuditLogPage> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> get _filtered {
+    final q = _search.trim().toLowerCase();
+    if (q.isEmpty) return _logs;
+    return _logs.where((l) {
+      final hay = [
+        l['action']?.toString() ?? '',
+        l['username']?.toString() ?? '',
+        l['details']?.toString() ?? '',
+        l['created_at']?.toString() ?? '',
+      ].join(' ').toLowerCase();
+      return hay.contains(q);
+    }).toList();
   }
 
   Future<void> _load() async {
@@ -101,18 +123,33 @@ class _AuditLogPageState extends State<AuditLogPage> {
                         ),
                       ),
                     ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                      child: TextField(
+                        controller: _searchCtrl,
+                        onChanged: (v) => setState(() => _search = v),
+                        decoration: const InputDecoration(
+                          hintText: 'Cari aksi, petugas, detail...',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                      ),
+                    ),
                     Expanded(
-                      child: _logs.isEmpty
-                          ? const EmptyView(message: 'Belum ada log aktivitas')
+                      child: _filtered.isEmpty
+                          ? EmptyView(
+                              message: _logs.isEmpty
+                                  ? 'Belum ada log aktivitas'
+                                  : 'Tidak ada log yang cocok',
+                            )
                           : RefreshIndicator(
                               onRefresh: _load,
                               child: ListView.separated(
                                 padding: const EdgeInsets.all(12),
-                                itemCount: _logs.length,
+                                itemCount: _filtered.length,
                                 separatorBuilder: (_, __) =>
                                     const SizedBox(height: 6),
                                 itemBuilder: (ctx, i) =>
-                                    _AuditTile(log: _logs[i]),
+                                    _AuditTile(log: _filtered[i]),
                               ),
                             ),
                     ),

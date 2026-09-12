@@ -195,6 +195,7 @@ class SettingsPage extends StatelessWidget {
                       ),
                 );
                 if (shouldExit == true && context.mounted) {
+                  Navigator.of(context).popUntil((r) => r.isFirst);
                   await context.read<AuthState>().logout();
                 }
               },

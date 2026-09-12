@@ -24,11 +24,61 @@ class _DamageListPageState extends State<DamageListPage> {
   bool _loading = true;
   List<DamageReport> _reports = [];
   String _filterStatus = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _search = '';
+  String _period = 'all'; // 'all' | 'today' | '7d' | '30d'
+
+  static const List<({String value, String label})> _periodFilters = [
+    (value: 'all', label: 'Semua'),
+    (value: 'today', label: 'Hari Ini'),
+    (value: '7d', label: '7 Hari'),
+    (value: '30d', label: '30 Hari'),
+  ];
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<DamageReport> get _filtered {
+    final q = _search.trim().toLowerCase();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return _reports.where((r) {
+      if (_period == 'today') {
+        final d = DateTime.tryParse(r.createdAt ?? '');
+        if (d == null) return false;
+        if (!DateTime(d.year, d.month, d.day).isAtSameMomentAs(today)) {
+          return false;
+        }
+      } else if (_period == '7d') {
+        final d = DateTime.tryParse(r.createdAt ?? '');
+        if (d == null || d.isBefore(today.subtract(const Duration(days: 6)))) {
+          return false;
+        }
+      } else if (_period == '30d') {
+        final d = DateTime.tryParse(r.createdAt ?? '');
+        if (d == null || d.isBefore(today.subtract(const Duration(days: 29)))) {
+          return false;
+        }
+      }
+      if (q.isEmpty) return true;
+      final hay = [
+        r.productName ?? '',
+        r.reason,
+        r.description ?? '',
+        r.employeeName ?? '',
+        r.status,
+      ].join(' ').toLowerCase();
+      return hay.contains(q);
+    }).toList();
   }
 
   Future<void> _load() async {
@@ -189,22 +239,53 @@ class _DamageListPageState extends State<DamageListPage> {
                     ),
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                  child: TextField(
+                    controller: _searchCtrl,
+                    onChanged: (v) => setState(() => _search = v),
+                    decoration: const InputDecoration(
+                      hintText: 'Cari produk, alasan, petugas...',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final f in _periodFilters)
+                          _FilterChip(
+                            label: f.label,
+                            selected: _period == f.value,
+                            onTap: () => setState(() => _period = f.value),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
                 Expanded(
-                  child: _reports.isEmpty
-                      ? const EmptyView(message: 'Belum ada laporan')
+                  child: _filtered.isEmpty
+                      ? EmptyView(
+                          message: _reports.isEmpty
+                              ? 'Belum ada laporan'
+                              : 'Tidak ada laporan yang cocok',
+                        )
                       : RefreshIndicator(
                           onRefresh: _load,
                           child: ListView.separated(
                             padding: const EdgeInsets.all(16),
-                            itemCount: _reports.length,
+                            itemCount: _filtered.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 8),
                             itemBuilder: (ctx, i) => _DamageTile(
-                              report: _reports[i],
+                              report: _filtered[i],
                               isBos: isBos,
-                              onApprove: () => _onApprove(_reports[i]),
-                              onReject: () => _onReject(_reports[i]),
-                              onTap: () => _showDetail(_reports[i]),
+                              onApprove: () => _onApprove(_filtered[i]),
+                              onReject: () => _onReject(_filtered[i]),
+                              onTap: () => _showDetail(_filtered[i]),
                             ),
                           ),
                         ),

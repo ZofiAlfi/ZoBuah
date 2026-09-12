@@ -16,11 +16,27 @@ class TransactionsPage extends StatefulWidget {
 class _TransactionsPageState extends State<TransactionsPage> {
   bool _loading = true;
   List<Sale> _sales = [];
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _search = '';
+  String _period = 'all'; // 'all' | 'today' | '7d' | '30d'
+
+  static const List<({String value, String label})> _periodFilters = [
+    (value: 'all', label: 'Semua'),
+    (value: 'today', label: 'Hari Ini'),
+    (value: '7d', label: '7 Hari'),
+    (value: '30d', label: '30 Hari'),
+  ];
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -29,26 +45,98 @@ class _TransactionsPageState extends State<TransactionsPage> {
     if (mounted) setState(() => _loading = false);
   }
 
+  List<Sale> get _filtered {
+    final q = _search.trim().toLowerCase();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return _sales.where((s) {
+      final created = DateTime.tryParse(s.createdAt ?? '');
+      if (_period == 'today') {
+        if (created == null) return false;
+        final d = DateTime(created.year, created.month, created.day);
+        if (!d.isAtSameMomentAs(today)) return false;
+      } else if (_period == '7d') {
+        if (created == null || created.isBefore(today.subtract(const Duration(days: 6)))) {
+          return false;
+        }
+      } else if (_period == '30d') {
+        if (created == null || created.isBefore(today.subtract(const Duration(days: 29)))) {
+          return false;
+        }
+      }
+      if (q.isEmpty) return true;
+      final hay = [
+        s.transactionNumber,
+        s.employeeName ?? '',
+        s.status,
+        s.payment?.method ?? '',
+        ...s.items.map((i) => i.productName),
+      ].join(' ').toLowerCase();
+      return hay.contains(q);
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final list = _filtered;
     return Scaffold(
       appBar: AppBar(title: const Text('Riwayat Transaksi')),
       body: _loading
           ? const LoadingView()
-          : _sales.isEmpty
-              ? const EmptyView(message: 'Belum ada transaksi')
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _sales.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (ctx, i) => _SaleTile(
-                      sale: _sales[i],
-                      onTap: () => _showDetail(_sales[i]),
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                  child: TextField(
+                    controller: _searchCtrl,
+                    onChanged: (v) => setState(() => _search = v),
+                    decoration: const InputDecoration(
+                      hintText: 'Cari no. transaksi, produk, petugas...',
+                      prefixIcon: Icon(Icons.search),
+                      suffixIcon: null,
                     ),
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final f in _periodFilters)
+                          _FilterChip(
+                            label: f.label,
+                            selected: _period == f.value,
+                            onTap: () => setState(() => _period = f.value),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: list.isEmpty
+                      ? EmptyView(
+                          message: _sales.isEmpty
+                              ? 'Belum ada transaksi'
+                              : 'Tidak ada transaksi yang cocok',
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: list.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 8),
+                            itemBuilder: (ctx, i) => _SaleTile(
+                              sale: list[i],
+                              onTap: () => _showDetail(list[i]),
+                            ),
+                          ),
+                        ),
+                ),
+              ],
+            ),
     );
   }
 
@@ -196,6 +284,26 @@ class _SaleDetail extends StatelessWidget {
         ],
         const SizedBox(height: 24),
       ],
+    );
+  }
+}
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _FilterChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: FilterChip(
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        visualDensity: VisualDensity.compact,
+      ),
     );
   }
 }
