@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../auth/auth_state.dart';
 import '../../core/theme.dart';
 import '../../sync/sync_manager.dart';
 import '../sales/sales_page.dart';
@@ -18,45 +17,9 @@ class CashierHome extends StatefulWidget {
 }
 
 class _CashierHomeState extends State<CashierHome> {
-  Future<void> _exitToLogin() async {
-    if (mounted) await context.read<AuthState>().logout();
-  }
-
-  Future<void> _requestExit() async {
-    final shouldExit = await showDialog<bool>(
-      context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Keluar aplikasi?'),
-            content: const Text('Kamu akan keluar dari aplikasi kasir.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Batal'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Keluar'),
-              ),
-            ],
-          ),
-    );
-    if (shouldExit == true &&
-        mounted &&
-        context.read<AuthState>().user?.isKaryawan == true) {
-      await _exitToLogin();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _requestExit();
-      },
-      child: Scaffold(
+    return Scaffold(
         appBar: AppBar(
           title: const Row(
             mainAxisSize: MainAxisSize.min,
@@ -119,7 +82,7 @@ class _CashierHomeState extends State<CashierHome> {
                         () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const SettingsPage(isHome: true),
+                            builder: (_) => const SettingsPage(),
                           ),
                         ),
                   ),
@@ -130,7 +93,6 @@ class _CashierHomeState extends State<CashierHome> {
             const Expanded(child: SalesPage(embedded: true)),
           ],
         ),
-      ),
     );
   }
 }
