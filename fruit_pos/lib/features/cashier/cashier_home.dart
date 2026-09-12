@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../../auth/auth_state.dart';
 import '../../core/theme.dart';
-import '../../services/kiosk_service.dart';
 import '../../sync/sync_manager.dart';
 import '../sales/sales_page.dart';
 import '../settings/settings_page.dart';
@@ -18,39 +17,8 @@ class CashierHome extends StatefulWidget {
   State<CashierHome> createState() => _CashierHomeState();
 }
 
-class _CashierHomeState extends State<CashierHome> with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _applyKiosk());
-  }
-
-  void _applyKiosk() {
-    debugPrint(
-      '[CashierHome] _applyKiosk user=${context.read<AuthState>().user?.username} '
-      'isKaryawan=${context.read<AuthState>().user?.isKaryawan}',
-    );
-    if (context.read<AuthState>().user?.isKaryawan == true) {
-      KioskService.enterKiosk();
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    debugPrint(
-      '[CashierHome] lifecycle=$state '
-      'karyawan=${context.read<AuthState>().user?.isKaryawan}',
-    );
-    if (state == AppLifecycleState.resumed) {
-      if (context.read<AuthState>().user?.isKaryawan == true) {
-        KioskService.enterKiosk();
-      }
-    }
-  }
-
+class _CashierHomeState extends State<CashierHome> {
   Future<void> _exitToLogin() async {
-    await KioskService.leaveKiosk();
     if (mounted) await context.read<AuthState>().logout();
   }
 
@@ -78,12 +46,6 @@ class _CashierHomeState extends State<CashierHome> with WidgetsBindingObserver {
         context.read<AuthState>().user?.isKaryawan == true) {
       await _exitToLogin();
     }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
   }
 
   @override

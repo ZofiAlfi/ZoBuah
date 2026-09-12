@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../../auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/theme.dart';
-import '../../services/kiosk_service.dart';
+
 import '../../sync/sync_manager.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -195,13 +195,7 @@ class SettingsPage extends StatelessWidget {
                       ),
                 );
                 if (shouldExit == true && context.mounted) {
-                  if (!isBos) {
-                    // Keluar dari kiosk dulu, baru logout (anti nyangkut).
-                    await KioskService.leaveKiosk();
-                  }
-                  if (context.mounted) {
-                    await context.read<AuthState>().logout();
-                  }
+                  await context.read<AuthState>().logout();
                 }
               },
             ),
