@@ -116,6 +116,25 @@ class _ProductFormPageState extends State<ProductFormPage> {
 
   Future<void> _removePhoto() async {
     if (widget.product == null || _photoUrl == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Hapus Foto?'),
+            content: const Text('Foto produk akan dihapus dari server.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Batal'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Hapus'),
+              ),
+            ],
+          ),
+    );
+    if (confirm != true) return;
     setState(() => _loading = true);
     try {
       final api = context.read<ApiService>();
@@ -314,13 +333,20 @@ class _ProductFormPageState extends State<ProductFormPage> {
                                     ),
                                   ),
                                 ),
-                                if (_isEdit && _photoUrl != null) ...[
+if (_isEdit && _photoUrl != null) ...[
                                   const SizedBox(height: 6),
-                                  TextButton(
-                                    onPressed: _loading ? null : _removePhoto,
-                                    child: const Text(
-                                      'Hapus Foto',
-                                      style: TextStyle(color: AppColors.danger),
+                                  TextButton.icon(
+                                    onPressed:
+                                        _loading ? null : _removePhoto,
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Hapus Foto'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor:
+                                          AppColors.textSecondary,
+                                      padding: EdgeInsets.zero,
                                     ),
                                   ),
                                 ],
@@ -334,7 +360,10 @@ class _ProductFormPageState extends State<ProductFormPage> {
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: _categoryId,
+                              value: _categories.any(
+                                      (c) => c.id == _categoryId)
+                                  ? _categoryId
+                                  : null,
                               decoration: const InputDecoration(
                                 labelText: 'Kategori',
                                 prefixIcon: Icon(Icons.category),

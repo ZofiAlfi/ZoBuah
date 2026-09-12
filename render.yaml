@@ -2,7 +2,7 @@ services:
   - type: web
     name: fruitpos-api
     runtime: docker
-    repo: https://github.com/USERNAME/PROJECTBUAH # ganti dengan repo Anda (atau buat manual dari dashboard)
+    repo: https://github.com/ZofiAlfi/ZoBuah
     rootDir: /backend
     plan: free
     healthCheckPath: /health
