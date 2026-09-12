@@ -18,7 +18,6 @@ from .routes import (
     sync,
     report,
     audit,
-    exit,
 )
 
 
@@ -84,7 +83,6 @@ app.include_router(damage_report.router, prefix="/api/v1")
 app.include_router(sync.router, prefix="/api/v1")
 app.include_router(report.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
-app.include_router(exit.router, prefix="/api/v1")
 
 if settings.STORAGE != "s3" and Path(settings.UPLOAD_DIR).exists():
     app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
@@ -115,7 +113,6 @@ def seed_initial_data():
     """Membuat akun Bos default jika belum ada + kategori buah dasar."""
     from .models.user import User, UserRole
     from .models.category import Category
-    from .routes.exit import seed_exit_pin
     from .security import hash_password
 
     db = SessionLocal()
@@ -137,7 +134,6 @@ def seed_initial_data():
             existing_cat = db.query(Category).filter(Category.name == cat_name).first()
             if existing_cat is None:
                 db.add(Category(name=cat_name))
-        seed_exit_pin(db)
         db.commit()
     finally:
         db.close()

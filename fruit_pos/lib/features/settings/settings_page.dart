@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../api/api_exception.dart';
-import '../../api/api_service.dart';
 import '../../auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/theme.dart';
 import '../../services/kiosk_service.dart';
-import '../../shared/widgets/exit_pin_dialog.dart';
 import '../../sync/sync_manager.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -144,25 +141,7 @@ class SettingsPage extends StatelessWidget {
               subtitle: 'Riwayat aktivitas penting',
               route: '/audit',
             ),
-            const _MenuTile(
-              icon: Icons.security,
-              title: 'Izin Keluar Karyawan',
-              subtitle: 'PIN sekali pakai menunggu persetujuan',
-              route: '/exit-approvals',
-            ),
             const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: const Icon(
-                  Icons.lock_outline,
-                  color: AppColors.primary,
-                ),
-                title: const Text('PIN Keluar Karyawan'),
-                subtitle: const Text('Ubah PIN default karyawan (123456)'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _showChangeExitPinDialog(context),
-              ),
-            ),
           ] else ...[
             const _MenuTile(
               icon: Icons.point_of_sale,
@@ -195,37 +174,32 @@ class SettingsPage extends StatelessWidget {
                 style: TextStyle(color: AppColors.danger),
               ),
               onTap: () async {
-                if (!isBos) {
-                  final shouldExit = await ExitPinDialog.show(context);
-                  if (shouldExit && context.mounted) {
-                    // Pastikan keluar dari kiosk dulu, baru logout (anti nyangkut).
-                    await KioskService.leaveKiosk();
-                    if (context.mounted) {
-                      await context.read<AuthState>().logout();
-                    }
-                  }
-                } else {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder:
-                        (ctx) => AlertDialog(
-                          title: const Text('Keluar aplikasi?'),
-                          content: const Text(
-                            'Data yang belum tersinkronisasi akan tetap aman.',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('Batal'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: const Text('Keluar'),
-                            ),
-                          ],
+                final shouldExit = await showDialog<bool>(
+                  context: context,
+                  builder:
+                      (ctx) => AlertDialog(
+                        title: const Text('Keluar aplikasi?'),
+                        content: const Text(
+                          'Data yang belum tersinkronisasi akan tetap aman.',
                         ),
-                  );
-                  if (confirm == true && context.mounted) {
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Batal'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('Keluar'),
+                          ),
+                        ],
+                      ),
+                );
+                if (shouldExit == true && context.mounted) {
+                  if (!isBos) {
+                    // Keluar dari kiosk dulu, baru logout (anti nyangkut).
+                    await KioskService.leaveKiosk();
+                  }
+                  if (context.mounted) {
                     await context.read<AuthState>().logout();
                   }
                 }
@@ -258,58 +232,6 @@ class SettingsPage extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-
-  void _showChangeExitPinDialog(BuildContext context) {
-    final ctrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder:
-          (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: const Text('Ubah PIN Keluar'),
-            content: TextField(
-              controller: ctrl,
-              keyboardType: TextInputType.number,
-              maxLength: 8,
-              decoration: const InputDecoration(
-                hintText: 'PIN baru (min. 4)',
-                counterText: '',
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Batal'),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  final pin = ctrl.text.trim();
-                  if (pin.length < 4) return;
-                  try {
-                    final api = ctx.read<ApiService>();
-                    await api.updateSettings(exitPin: pin);
-                    if (ctx.mounted) {
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('PIN keluar berhasil diubah'),
-                        ),
-                      );
-                    }
-                  } on ApiException catch (e) {
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text(e.message)));
-                  }
-                },
-                child: const Text('Simpan'),
-              ),
-            ],
-          ),
     );
   }
 }

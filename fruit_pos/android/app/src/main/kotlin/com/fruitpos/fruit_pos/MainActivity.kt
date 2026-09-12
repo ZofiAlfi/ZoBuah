@@ -95,10 +95,6 @@ class MainActivity : FlutterActivity() {
     override fun onUserLeaveHint() {
         Log.i(TAG, "onUserLeaveHint locked=$locked")
         if (locked) {
-            try {
-                channel.invokeMethod("leaveAttempted", null)
-            } catch (_: Exception) {
-            }
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 try {
                     val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager

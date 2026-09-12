@@ -4,8 +4,6 @@ import 'package:provider/provider.dart';
 import '../../auth/auth_state.dart';
 import '../../core/theme.dart';
 import '../../services/kiosk_service.dart';
-import '../../services/exit_attempt_listener.dart';
-import '../../shared/widgets/exit_pin_dialog.dart';
 import '../../sync/sync_manager.dart';
 import '../sales/sales_page.dart';
 import '../settings/settings_page.dart';
@@ -45,11 +43,7 @@ class _CashierHomeState extends State<CashierHome> with WidgetsBindingObserver {
       'karyawan=${context.read<AuthState>().user?.isKaryawan}',
     );
     if (state == AppLifecycleState.resumed) {
-      if (ExitAttemptListener.pendingExitGate &&
-          context.read<AuthState>().user?.isKaryawan == true) {
-        ExitAttemptListener.pendingExitGate = false;
-        _requestExit();
-      } else if (context.read<AuthState>().user?.isKaryawan == true) {
+      if (context.read<AuthState>().user?.isKaryawan == true) {
         KioskService.enterKiosk();
       }
     }
@@ -61,8 +55,25 @@ class _CashierHomeState extends State<CashierHome> with WidgetsBindingObserver {
   }
 
   Future<void> _requestExit() async {
-    final shouldExit = await ExitPinDialog.show(context);
-    if (shouldExit &&
+    final shouldExit = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Keluar aplikasi?'),
+            content: const Text('Kamu akan keluar dari aplikasi kasir.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Batal'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Keluar'),
+              ),
+            ],
+          ),
+    );
+    if (shouldExit == true &&
         mounted &&
         context.read<AuthState>().user?.isKaryawan == true) {
       await _exitToLogin();

@@ -23,12 +23,10 @@ import 'features/sales/sales_page.dart';
 import 'features/stock/stock_page.dart';
 import 'features/audit/audit_log_page.dart';
 import 'features/employees/employees_page.dart';
-import 'features/settings/exit_approvals_page.dart';
 import 'features/splash/splash_page.dart';
 import 'features/transactions/transactions_page.dart';
 import 'sync/connectivity_service.dart';
 import 'sync/sync_manager.dart';
-import 'services/exit_attempt_listener.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -98,9 +96,6 @@ class FruitPosApp extends StatelessWidget {
         title: AppConstants.appName,
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
-        builder:
-            (context, child) =>
-                ExitAttemptListener(child: child ?? const SizedBox.shrink()),
         initialRoute: '/',
         routes: {
           '/': (_) => const AuthGate(),
@@ -116,8 +111,7 @@ class FruitPosApp extends StatelessWidget {
           '/stock': (_) => const StockPage(),
           '/audit': (_) => const AuditLogPage(),
           '/employees': (_) => const EmployeesPage(),
-          '/exit-approvals': (_) => const ExitApprovalsPage(),
-        },
+      },
       ),
     );
   }

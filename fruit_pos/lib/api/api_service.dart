@@ -386,32 +386,4 @@ class ApiService {
     return await client.delete('/products/categories/$id')
         as Map<String, dynamic>;
   }
-
-  Future<Map<String, dynamic>> requestExitOtp() async {
-    return await client.post('/auth/exit/request', body: {})
-        as Map<String, dynamic>;
-  }
-
-  Future<List<Map<String, dynamic>>> fetchPendingExitOtps() async {
-    final res = await client.get('/auth/exit/pending') as Map<String, dynamic>;
-    final items = (res['items'] as List<dynamic>?) ?? const [];
-    return items.map((e) => (e as Map).cast<String, dynamic>()).toList();
-  }
-
-  Future<Map<String, dynamic>> verifyExitPin(String pin) async {
-    return await client.post('/auth/exit/verify', body: {'pin': pin})
-        as Map<String, dynamic>;
-  }
-
-  Future<Map<String, dynamic>> fetchSettings() async {
-    return await client.get('/auth/settings') as Map<String, dynamic>;
-  }
-
-  Future<Map<String, dynamic>> updateSettings({String? exitPin}) async {
-    return await client.put(
-          '/auth/settings',
-          body: {if (exitPin != null) 'exit_pin': exitPin},
-        )
-        as Map<String, dynamic>;
-  }
 }
