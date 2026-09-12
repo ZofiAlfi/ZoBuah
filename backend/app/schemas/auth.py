@@ -13,7 +13,7 @@ class TokenResponse(BaseModel):
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=4, max_length=128)
 
 
 class RefreshRequest(BaseModel):
@@ -22,14 +22,14 @@ class RefreshRequest(BaseModel):
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=4, max_length=128)
     full_name: str = Field(..., min_length=1, max_length=100)
     role: str = Field(default="KARYAWAN", pattern="^(BOS|KARYAWAN)$")
 
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
-    password: Optional[str] = Field(None, min_length=6, max_length=128)
+    password: Optional[str] = Field(None, min_length=4, max_length=128)
     role: Optional[str] = Field(None, pattern="^(BOS|KARYAWAN)$")
     is_active: Optional[bool] = None
 

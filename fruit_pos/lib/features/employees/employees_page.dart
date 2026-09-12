@@ -337,7 +337,7 @@ class _UserFormSheetState extends State<_UserFormSheet> {
                     isEdit ? 'Password Baru (kosongkan jika tidak ubah)' : 'Password',
               ),
               validator: (v) {
-                if (!isEdit && (v == null || v.length < 6)) return 'Minimal 6 karakter';
+                if (!isEdit && (v == null || v.length < 4)) return 'Minimal 4 karakter';
                 return null;
               },
             ),

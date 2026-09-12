@@ -48,13 +48,13 @@ def test_login_masuk_invalid_tanpa_token():
 
 
 def test_login_bos_berhasil():
-    r = client.post("/api/v1/auth/login", json={"username": "bos", "password": "bos12345"})
+    r = client.post("/api/v1/auth/login", json={"username": "zofi", "password": "12345"})
     assert r.status_code == 200
     assert "access_token" in r.json()
 
 
 def test_dashboard_berisi_kunci_utama():
-    r = client.post("/api/v1/auth/login", json={"username": "bos", "password": "bos12345"})
+    r = client.post("/api/v1/auth/login", json={"username": "zofi", "password": "12345"})
     token = r.json()["access_token"]
     r2 = client.get("/api/v1/reports/dashboard", headers={"Authorization": f"Bearer {token}"})
     assert r2.status_code == 200
