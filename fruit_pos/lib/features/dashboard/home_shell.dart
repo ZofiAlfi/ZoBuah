@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../auth/auth_state.dart';
-import '../../sync/sync_manager.dart';
 import '../cashier/cashier_home.dart';
 import '../settings/settings_page.dart';
 import '../stock/stock_page.dart';
@@ -35,28 +34,6 @@ class _HomeShellState extends State<HomeShell> {
     ];
 
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset('assets/logo.png', width: 24, height: 24),
-            const SizedBox(width: 8),
-            const Text('Laporan Buah - Pemilik'),
-          ],
-        ),
-        leading: null,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.sync),
-            onPressed: () {
-              context.read<SyncManager>().syncNow(forcePull: true);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Sinkronisasi dijalankan...')),
-              );
-            },
-          ),
-        ],
-      ),
       body: IndexedStack(index: _index, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,

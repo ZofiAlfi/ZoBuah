@@ -68,18 +68,20 @@ class _DashboardPageState extends State<DashboardPage> {
     final auth = context.watch<AuthState>();
     final isBos = auth.user?.isBos ?? false;
 
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _OfflineBanner(isOffline: _isOffline),
-          const SizedBox(height: 12),
-          if (isBos)
-            _buildBosDashboard()
-          else
-            _buildKaryawanDashboard(),
-        ],
+    return SafeArea(
+      child: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _OfflineBanner(isOffline: _isOffline),
+            const SizedBox(height: 12),
+            if (isBos)
+              _buildBosDashboard()
+            else
+              _buildKaryawanDashboard(),
+          ],
+        ),
       ),
     );
   }
