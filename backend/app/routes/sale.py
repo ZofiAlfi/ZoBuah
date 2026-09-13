@@ -32,6 +32,22 @@ def generate_transaction_number(db: Session) -> str:
     return f"{prefix}{new_num:03d}"
 
 
+def _save_payment_photo(sale_id, photo_b64: str) -> dict:
+    """Simpan foto bukti pembayaran; kembalikan {"file_path", "file_url"}."""
+    import base64
+    from ..services.storage import storage
+
+    try:
+        photo_bytes = base64.b64decode(photo_b64)
+    except Exception:
+        return {}
+    if not photo_bytes:
+        return {}
+    rel_key = f"payment/{sale_id}_0.jpg"
+    storage.save_bytes(rel_key, photo_bytes, "image/jpeg")
+    return {"file_path": rel_key, "file_url": storage.url(rel_key)}
+
+
 router = APIRouter(prefix="/sales", tags=["sales"])
 
 
@@ -121,6 +137,9 @@ def create_sale(
         db.add(sale_item)
 
     if body.payment:
+        payment_kwargs = {}
+        if body.payment.photo:
+            payment_kwargs.update(_save_payment_photo(sale.id, body.payment.photo))
         payment = Payment(
             sale_id=sale.id,
             method=body.payment.method,
@@ -128,6 +147,7 @@ def create_sale(
             cash_received=body.payment.cash_received,
             change_amount=body.payment.change_amount,
             reference=body.payment.reference,
+            **payment_kwargs,
         )
         db.add(payment)
 

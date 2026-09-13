@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -9,6 +12,7 @@ import '../../core/theme.dart';
 import '../../database/app_database.dart';
 import '../../models/sale.dart';
 import '../../shared/widgets/common_widgets.dart';
+import '../../shared/widgets/payment_proof.dart';
 import '../../sync/sync_manager.dart';
 
 class PaymentPage extends StatefulWidget {
@@ -24,6 +28,7 @@ class _PaymentPageState extends State<PaymentPage> {
   TextEditingController _cashCtrl = TextEditingController();
   TextEditingController _discountCtrl = TextEditingController();
   bool _processing = false;
+  String? _proofBase64;
 
   double get _subtotal =>
       widget.items.fold(0, (sum, item) => sum + item.subtotal);
@@ -91,6 +96,7 @@ class _PaymentPageState extends State<PaymentPage> {
             ? double.tryParse(_cashCtrl.text.replaceAll(',', '.'))
             : null,
         changeAmount: _method == 'CASH' && _change >= 0 ? _change : null,
+        photo: _proofBase64,
       ),
     );
 
@@ -98,10 +104,11 @@ class _PaymentPageState extends State<PaymentPage> {
       // Coba langsung ke server
       final res = await api.createSale(sale.toSyncJson());
       final serverSale = Sale.fromJson(res);
-      await db.sales.insertSale(serverSale);
+      // Simpan salinan lokal (tetap membawa foto bukti) lalu tandai terkirim.
+      await db.sales.insertSale(sale);
       await db.sales.markSynced(saleId);
       await _updateLocalStock();
-      if (mounted) _showSuccess(serverSale);
+      if (mounted) _showSuccess(sale);
     } catch (e) {
       // Simpan ke lokal, masuk queue sinkronisasi
       await db.sales.insertSale(sale);
@@ -114,6 +121,50 @@ class _PaymentPageState extends State<PaymentPage> {
   }
 
   String _two(int n) => n.toString().padLeft(2, '0');
+
+  Future<void> _pickProof(ImageSource source) async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(
+      source: source,
+      maxWidth: 1200,
+      imageQuality: 70,
+    );
+    if (file != null) {
+      final bytes = await file.readAsBytes();
+      setState(() => _proofBase64 = base64Encode(bytes));
+    }
+  }
+
+  Future<void> _chooseProofSource() async {
+    if (_proofBase64 != null) {
+      setState(() => _proofBase64 = null);
+      return;
+    }
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera, color: AppColors.primary),
+              title: const Text('Ambil Foto'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: AppColors.primary),
+              title: const Text('Dari Galeri'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source != null) await _pickProof(source);
+  }
 
   String _toInput(double v) {
     if (v == v.roundToDouble()) return v.toInt().toString();
@@ -246,6 +297,77 @@ class _PaymentPageState extends State<PaymentPage> {
                         ),
                     ],
                   ),
+                  if (_method != 'CASH') ...[
+                    const SizedBox(height: 16),
+                    Text('Bukti Pembayaran', style: _sectionTitle()),
+                    const SizedBox(height: 8),
+                    InkWell(
+                      key: const Key('proof_picker'),
+                      onTap: _chooseProofSource,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        width: double.infinity,
+                        height: 140,
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _proofBase64 != null
+                                ? AppColors.success
+                                : AppColors.primary.withValues(alpha: 0.5),
+                          ),
+                          color: _proofBase64 != null
+                              ? AppColors.success.withValues(alpha: 0.08)
+                              : AppColors.primaryLight.withValues(alpha: 0.08),
+                        ),
+                        child: _proofBase64 != null
+                            ? Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: PaymentProof(
+                                      image: _proofBase64,
+                                      size: 300,
+                                    ),
+                                  ),
+                                  Align(
+                                    alignment: Alignment.topRight,
+                                    child: Container(
+                                      margin: const EdgeInsets.all(4),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black54,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Text(
+                                        'Ketuk untuk hapus',
+                                        style: TextStyle(
+                                            fontSize: 10, color: Colors.white),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.add_a_photo,
+                                    color: AppColors.primary,
+                                    size: 28,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    'Lampirkan foto bukti pembayaran',
+                                    style: TextStyle(fontSize: 13),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ],
                   if (_method == 'CASH') ...[
                     const SizedBox(height: 16),
                     TextField(
@@ -513,6 +635,22 @@ class _SuccessPage extends StatelessWidget {
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
                                 color: AppColors.success)),
+                      ],
+                      if (sale.payment?.photo != null ||
+                          sale.payment?.photoUrl != null) ...[
+                        const SizedBox(height: 12),
+                        const Text('Bukti Pembayaran',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary)),
+                        const SizedBox(height: 6),
+                        Center(
+                          child: PaymentProof(
+                            image:
+                                sale.payment?.photo ?? sale.payment?.photoUrl,
+                            size: 96,
+                          ),
+                        ),
                       ],
                       if (isOffline) ...[
                         const SizedBox(height: 12),

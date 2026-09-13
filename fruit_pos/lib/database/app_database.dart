@@ -23,13 +23,16 @@ class AppDatabase {
     final path = join(dir, 'fruit_pos.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await _createTables(db);
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
           await db.execute('ALTER TABLE products ADD COLUMN photo_url TEXT');
+        }
+        if (oldV < 3) {
+          await db.execute('ALTER TABLE payments ADD COLUMN photo TEXT');
         }
       },
     );
@@ -99,7 +102,8 @@ class AppDatabase {
         amount REAL,
         cash_received REAL,
         change_amount REAL,
-        reference TEXT
+        reference TEXT,
+        photo TEXT
       )
     ''');
 

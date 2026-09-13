@@ -47,6 +47,8 @@ class Payment {
   final double? cashReceived;
   final double? changeAmount;
   final String? reference;
+  final String? photo;
+  final String? photoUrl;
 
   Payment({
     required this.method,
@@ -54,6 +56,8 @@ class Payment {
     this.cashReceived,
     this.changeAmount,
     this.reference,
+    this.photo,
+    this.photoUrl,
   });
 
   factory Payment.fromJson(Map<String, dynamic> json) => Payment(
@@ -62,6 +66,8 @@ class Payment {
         cashReceived: json['cash_received']?.toDouble(),
         changeAmount: json['change_amount']?.toDouble(),
         reference: json['reference']?.toString(),
+        photo: json['photo']?.toString(),
+        photoUrl: json['file_url']?.toString(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -70,6 +76,7 @@ class Payment {
         'cash_received': cashReceived,
         'change_amount': changeAmount,
         'reference': reference,
+        'photo': photo,
       };
 }
 

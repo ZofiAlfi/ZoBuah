@@ -89,6 +89,9 @@ class Payment(Base):
     cash_received = Column(Numeric(12, 2), nullable=True)
     change_amount = Column(Numeric(12, 2), nullable=True)
     reference = Column(String(100), nullable=True)
+    # Foto bukti pembayaran (QRIS/Transfer).
+    file_path = Column(String(255), nullable=True)
+    file_url = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     sale = relationship("Sale", back_populates="payment")
@@ -102,5 +105,7 @@ class Payment(Base):
             "cash_received": float(self.cash_received) if self.cash_received else None,
             "change_amount": float(self.change_amount) if self.change_amount else None,
             "reference": self.reference,
+            "file_path": self.file_path,
+            "file_url": self.file_url,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -95,6 +95,20 @@ def push_data(
 
                 pay = data.get("payment")
                 if pay:
+                    payment_kwargs = {}
+                    if pay.get("photo"):
+                        import base64
+                        from ..services.storage import storage
+                        try:
+                            photo_bytes = base64.b64decode(pay["photo"])
+                            rel_key = f"payment/{sale.id}_0.jpg"
+                            storage.save_bytes(rel_key, photo_bytes, "image/jpeg")
+                            payment_kwargs = {
+                                "file_path": rel_key,
+                                "file_url": storage.url(rel_key),
+                            }
+                        except Exception:
+                            pass
                     db.add(Payment(
                         sale_id=sale.id,
                         method=pay.get("method", "CASH"),
@@ -102,6 +116,7 @@ def push_data(
                         cash_received=pay.get("cash_received"),
                         change_amount=pay.get("change_amount"),
                         reference=pay.get("reference"),
+                        **payment_kwargs,
                     ))
 
                 db.add(SyncEvent(

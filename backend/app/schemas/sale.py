@@ -16,6 +16,8 @@ class PaymentCreate(BaseModel):
     cash_received: Optional[float] = Field(None, ge=0)
     change_amount: Optional[float] = Field(None, ge=0)
     reference: Optional[str] = None
+    # Foto bukti pembayaran QRIS/Transfer, dikirim sebagai base64.
+    photo: Optional[str] = None
 
 
 class SaleCreate(BaseModel):

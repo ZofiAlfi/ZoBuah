@@ -46,6 +46,7 @@ class SalesDao {
         'cash_received': sale.payment!.cashReceived,
         'change_amount': sale.payment!.changeAmount,
         'reference': sale.payment!.reference,
+        'photo': sale.payment!.photo ?? sale.payment!.photoUrl,
       });
     }
   }
@@ -118,6 +119,7 @@ class SalesDao {
             'cash_received': sale.payment!.cashReceived,
             'change_amount': sale.payment!.changeAmount,
             'reference': sale.payment!.reference,
+            'photo': sale.payment!.photo ?? sale.payment!.photoUrl,
           }, conflictAlgorithm: ConflictAlgorithm.ignore);
         }
       }
@@ -156,6 +158,7 @@ class SalesDao {
               cashReceived: payments.first['cash_received']?.toDouble(),
               changeAmount: payments.first['change_amount']?.toDouble(),
               reference: payments.first['reference'],
+              photo: payments.first['photo']?.toString(),
             ),
     );
   }

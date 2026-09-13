@@ -99,8 +99,25 @@ else:
         return Response(content=data, media_type=media_type)
 
 
+def _migrate_payment_photo_columns():
+    """Idempoten: tambah kolom foto bukti pembayaran di tabel payments existing."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS file_path VARCHAR(255)")
+        )
+        conn.execute(
+            text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS file_url VARCHAR(500)")
+        )
+
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
+    try:
+        _migrate_payment_photo_columns()
+    except Exception:
+        pass
 
 
 @app.on_event("startup")

@@ -5,6 +5,7 @@ import '../../core/theme.dart';
 import '../../database/app_database.dart';
 import '../../models/sale.dart';
 import '../../shared/widgets/common_widgets.dart';
+import '../../shared/widgets/payment_proof.dart';
 
 class TransactionsPage extends StatefulWidget {
   const TransactionsPage({super.key});
@@ -281,12 +282,63 @@ class _SaleDetail extends StatelessWidget {
                 ),
             ],
           ),
-        ],
+          if (sale.payment!.photo != null || sale.payment!.photoUrl != null) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Text('Bukti Pembayaran',
+                    style: TextStyle(color: AppColors.textSecondary)),
+                const Spacer(),
+                InkWell(
+                  onTap: () => _showProof(
+                    context,
+                    sale.payment!.photo ?? sale.payment!.photoUrl!,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  child: PaymentProof(
+                    image: sale.payment?.photo ?? sale.payment?.photoUrl,
+                    size: 48,
+                  ),
+                ),
+              ],
+            ),
+          ],
+],
         const SizedBox(height: 24),
       ],
     );
   }
+
+void _showProof(BuildContext context, String image) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            PaymentProof(image: image, size: 300),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: GestureDetector(
+                onTap: () => Navigator.pop(ctx),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: const BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close, color: Colors.white, size: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
+
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool selected;

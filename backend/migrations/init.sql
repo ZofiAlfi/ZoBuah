@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS payments (
     cash_received NUMERIC(12,2),
     change_amount NUMERIC(12,2),
     reference     VARCHAR(100),
+    file_path     VARCHAR(255),
+    file_url      VARCHAR(500),
     created_at    TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
