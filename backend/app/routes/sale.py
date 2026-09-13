@@ -18,17 +18,19 @@ def generate_transaction_number(db: Session) -> str:
     today = datetime.now()
     date_part = today.strftime("%Y%m%d")
     prefix = f"TRX-{date_part}-"
-    last_sale = (
-        db.query(Sale)
+    nums = []
+    for (tn,) in (
+        db.query(Sale.transaction_number)
         .filter(Sale.transaction_number.like(f"{prefix}%"))
-        .order_by(Sale.created_at.desc())
-        .first()
-    )
-    if last_sale:
-        last_num = int(last_sale.transaction_number.split("-")[-1])
-        new_num = last_num + 1
-    else:
-        new_num = 1
+        .all()
+    ):
+        try:
+            nums.append(int(tn.rsplit("-", 1)[-1]))
+        except ValueError:
+            # Nomor transaksi offline dari HP bisa berformat hex (mis. 6E0);
+            # abaikan, jangan sampai memicu crash pembuatan nomor baru.
+            continue
+    new_num = (max(nums) + 1) if nums else 1
     return f"{prefix}{new_num:03d}"
 
 
