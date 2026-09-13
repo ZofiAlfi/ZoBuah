@@ -70,9 +70,30 @@ def root():
     }
 
 
+def _payment_photo_columns_exist() -> bool:
+    """True bila kolom file_path & file_url sudah ada di tabel payments."""
+    from sqlalchemy import text
+
+    try:
+        with engine.connect() as conn:
+            count = conn.execute(
+                text(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_name='payments' AND column_name IN ('file_path','file_url')"
+                )
+            ).scalar()
+            return count == 2
+    except Exception:
+        return False
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "time": __import__("datetime").datetime.utcnow().isoformat()}
+    return {
+        "status": "ok",
+        "time": __import__("datetime").datetime.utcnow().isoformat(),
+        "payment_photo_columns": _payment_photo_columns_exist(),
+    }
 
 
 app.include_router(auth.router, prefix="/api/v1")
@@ -100,24 +121,30 @@ else:
 
 
 def _migrate_payment_photo_columns():
-    """Idempoten: tambah kolom foto bukti pembayaran di tabel payments existing."""
+    """Idempoten: tambah kolom foto bukti pembayaran di tabel payments existing.
+
+    Dijalankan per-pernyataan dalam mode AUTOCOMMIT agar kompatibel dengan
+    koneksi pooling Supabase (pgbouncer) yang sering menolak DDL di dalam
+    transaksi multi-statement eksplisit.
+    """
     from sqlalchemy import text
 
-    with engine.begin() as conn:
-        conn.execute(
-            text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS file_path VARCHAR(255)")
-        )
-        conn.execute(
-            text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS file_url VARCHAR(500)")
-        )
+    for stmt in (
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS file_path VARCHAR(255)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS file_url VARCHAR(500)",
+    ):
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text(stmt))
+        except Exception as exc:
+            print(f"[startup] GAGAL migrasi kolom foto pembayaran ({stmt[:40]}...): {exc!r}", flush=True)
+    ok = _payment_photo_columns_exist()
+    print(f"[startup] migrasi kolom foto pembayaran: ok={ok}", flush=True)
 
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
-    try:
-        _migrate_payment_photo_columns()
-    except Exception:
-        pass
+    _migrate_payment_photo_columns()
 
 
 @app.on_event("startup")
