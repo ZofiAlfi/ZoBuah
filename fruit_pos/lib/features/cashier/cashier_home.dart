@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/formatters.dart';
 import '../../core/theme.dart';
+import '../../database/app_database.dart';
+import '../../services/notification_service.dart';
 import '../../sync/sync_manager.dart';
 import '../sales/sales_page.dart';
 import '../settings/settings_page.dart';
@@ -17,6 +21,62 @@ class CashierHome extends StatefulWidget {
 }
 
 class _CashierHomeState extends State<CashierHome> {
+  static const _statusKey = 'karyawan_damage_status';
+  late final SyncManager _sync;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync = context.read<SyncManager>();
+    _sync.addListener(_onSyncChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onSyncChanged());
+  }
+
+  @override
+  void dispose() {
+    _sync.removeListener(_onSyncChanged);
+    super.dispose();
+  }
+
+  Future<void> _onSyncChanged() async {
+    if (!mounted) return;
+    try {
+      final reports = await AppDatabase.instance.damage
+          .getDamageReports();
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString(_statusKey);
+      final known = <String, String>{
+        if (stored != null && stored.isNotEmpty)
+          for (final entry in stored.split(','))
+            if (entry.contains('='))
+              entry.split('=').first: entry.split('=').last,
+      };
+      final isInitial = known.isEmpty;
+      for (final r in reports) {
+        final id = r.id;
+        if (id == null) continue;
+        final prev = known[id];
+        if (!isInitial &&
+            prev != r.status &&
+            (r.isApproved || r.isRejected)) {
+          final label = r.isApproved ? 'disetujui' : 'ditolak';
+          await NotificationService.instance.showDamageStatus(
+            'Laporan produk rusak $label',
+            '${Formatters.quantity(r.quantity)} ${r.unit} ${r.productName ?? 'Produk'}',
+          );
+        }
+        known[id] = r.status;
+      }
+      final entries = known.entries
+          .where((e) => e.key.isNotEmpty && e.value.isNotEmpty)
+          .map((e) => '${e.key}=${e.value}')
+          .toList();
+      await prefs.setString(_statusKey, entries.join(','));
+    } catch (_) {
+      // Abaikan, akan dicoba lagi di sinkron berikutnya.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(

@@ -25,12 +25,20 @@ import 'features/audit/audit_log_page.dart';
 import 'features/employees/employees_page.dart';
 import 'features/splash/splash_page.dart';
 import 'features/transactions/transactions_page.dart';
+import 'services/notification_service.dart';
 import 'sync/connectivity_service.dart';
 import 'sync/sync_manager.dart';
+
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('id_ID', null);
+
+  await NotificationService.instance.init();
+  NotificationService.instance.onOpenDamage = () {
+    rootNavigatorKey.currentState?.pushNamed('/damage/list');
+  };
 
   final apiClient = ApiClient();
   final apiService = ApiService(apiClient);
@@ -66,7 +74,7 @@ Future<void> main() async {
   );
 }
 
-class FruitPosApp extends StatelessWidget {
+class FruitPosApp extends StatefulWidget {
   final AuthState authState;
   final ApiService apiService;
   final ApiClient apiClient;
@@ -83,18 +91,44 @@ class FruitPosApp extends StatelessWidget {
   });
 
   @override
+  State<FruitPosApp> createState() => _FruitPosAppState();
+}
+
+class _FruitPosAppState extends State<FruitPosApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Saat app kembali ke foreground, langsung sinkronkan agar data live.
+    if (state == AppLifecycleState.resumed) {
+      unawaited(widget.syncManager.syncNow());
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider<AuthState>.value(value: authState),
-        Provider<ApiService>.value(value: apiService),
-        Provider<ApiClient>.value(value: apiClient),
-        ChangeNotifierProvider<SyncManager>.value(value: syncManager),
-        Provider<ConnectivityService>.value(value: connectivity),
+        ChangeNotifierProvider<AuthState>.value(value: widget.authState),
+        Provider<ApiService>.value(value: widget.apiService),
+        Provider<ApiClient>.value(value: widget.apiClient),
+        ChangeNotifierProvider<SyncManager>.value(value: widget.syncManager),
+        Provider<ConnectivityService>.value(value: widget.connectivity),
       ],
       child: MaterialApp(
         title: AppConstants.appName,
         debugShowCheckedModeBanner: false,
+        navigatorKey: rootNavigatorKey,
         theme: AppTheme.light(),
         initialRoute: '/',
         routes: {

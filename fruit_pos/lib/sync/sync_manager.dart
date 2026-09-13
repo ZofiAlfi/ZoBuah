@@ -70,14 +70,11 @@ class SyncManager extends ChangeNotifier {
       final deviceId = await getDeviceId();
       final prefs = await SharedPreferences.getInstance();
       final lastSync = prefs.getString(AppConstants.prefLastSync);
-      final pendingCountBefore = await outboxDao.countPending();
-
-      if (pendingCountBefore > 0 || forcePull || lastSync == null) {
-        await _push();
-        await _pull(deviceId ?? '', lastSync);
-        await prefs.setString(AppConstants.prefLastSync, DateTime.now().toUtc().toIso8601String());
-        await outboxDao.removeSynced();
-      }
+      await _push();
+      await _pull(deviceId ?? '', forcePull ? null : lastSync);
+      await prefs.setString(
+          AppConstants.prefLastSync, DateTime.now().toUtc().toIso8601String());
+      await outboxDao.removeSynced();
     } catch (e) {
       debugPrint('Sync gagal: $e');
     } finally {
