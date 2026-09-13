@@ -12,6 +12,7 @@ import '../../core/theme.dart';
 import '../../database/app_database.dart';
 import '../../models/damage_report.dart';
 import '../../shared/widgets/common_widgets.dart';
+import '../../shared/widgets/photo_view_dialog.dart';
 
 class DamageListPage extends StatefulWidget {
   const DamageListPage({super.key});
@@ -314,6 +315,22 @@ class _DamageListPageState extends State<DamageListPage> {
                 _row('Keterangan', report.description!),
               if (report.rejectionReason?.isNotEmpty == true)
                 _row('Alasan ditolak', report.rejectionReason!),
+              if (report.photos.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('Foto Bukti',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 72,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: report.photos.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (ctx, i) =>
+                        Thumb(image: report.photos[i], size: 72),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -463,17 +480,26 @@ class _DamageTile extends StatelessWidget {
 
 class Thumb extends StatelessWidget {
   final String image;
-  const Thumb({required this.image});
+  final double size;
+  const Thumb({required this.image, this.size = 56});
 
   @override
   Widget build(BuildContext context) {
+    final child = _buildImage(context);
+    return GestureDetector(
+      onTap: () => showPhotoViewDialog(context, image),
+      child: child,
+    );
+  }
+
+  Widget _buildImage(BuildContext context) {
     if (_isUrl(image)) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Image.network(
           _absolute(image),
-          width: 56,
-          height: 56,
+          width: size,
+          height: size,
           fit: BoxFit.cover,
           errorBuilder: (_, __, ___) => _placeholder(),
         ),
@@ -496,8 +522,8 @@ class Thumb extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       child: Image.memory(
         bytes,
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _placeholder(),
       ),
@@ -512,8 +538,8 @@ class Thumb extends StatelessWidget {
 
   Widget _placeholder() {
     return Container(
-      width: 56,
-      height: 56,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: const Color(0xFFE0E0E0),
         borderRadius: BorderRadius.circular(8),

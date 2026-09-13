@@ -13,6 +13,7 @@ import '../../database/app_database.dart';
 import '../../models/damage_report.dart';
 import '../../models/product.dart';
 import '../../shared/widgets/common_widgets.dart';
+import '../../shared/widgets/photo_view_dialog.dart';
 import '../../sync/sync_manager.dart';
 import '../../api/api_service.dart';
 
@@ -407,13 +408,16 @@ class _PhotoThumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: Image.memory(
-        base64Decode(base64),
-        width: 90,
-        height: 90,
-        fit: BoxFit.cover,
+    return GestureDetector(
+      onTap: () => showPhotoViewDialog(context, base64),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.memory(
+          base64Decode(base64),
+          width: 90,
+          height: 90,
+          fit: BoxFit.cover,
+        ),
       ),
     );
   }

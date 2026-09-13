@@ -72,7 +72,7 @@ class _DashboardPageState extends State<DashboardPage> {
       child: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
           children: [
             _OfflineBanner(isOffline: _isOffline),
             const SizedBox(height: 12),
@@ -166,7 +166,7 @@ class _DashboardPageState extends State<DashboardPage> {
           pendingCount: d['pending_damage_count'] ?? 0,
           onPendingTap: () => Navigator.pushNamed(context, '/damage/list'),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 24),
         GridView.count(
           crossAxisCount: 2,
           shrinkWrap: true,
@@ -204,7 +204,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
         _PendingDamageCard(
           count: d['pending_damage_count'] ?? 0,
           lossValue: Formatters.currency(d['pending_damage_loss_value'] ?? 0),

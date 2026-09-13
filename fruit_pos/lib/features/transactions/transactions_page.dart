@@ -6,6 +6,7 @@ import '../../database/app_database.dart';
 import '../../models/sale.dart';
 import '../../shared/widgets/common_widgets.dart';
 import '../../shared/widgets/payment_proof.dart';
+import '../../shared/widgets/photo_view_dialog.dart';
 
 class TransactionsPage extends StatefulWidget {
   const TransactionsPage({super.key});
@@ -290,7 +291,7 @@ class _SaleDetail extends StatelessWidget {
                     style: TextStyle(color: AppColors.textSecondary)),
                 const Spacer(),
                 InkWell(
-                  onTap: () => _showProof(
+                  onTap: () => showPhotoViewDialog(
                     context,
                     sale.payment!.photo ?? sale.payment!.photoUrl!,
                   ),
@@ -306,35 +307,6 @@ class _SaleDetail extends StatelessWidget {
 ],
         const SizedBox(height: 24),
       ],
-    );
-  }
-
-void _showProof(BuildContext context, String image) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        child: Stack(
-          children: [
-            PaymentProof(image: image, size: 300),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: GestureDetector(
-                onTap: () => Navigator.pop(ctx),
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: const BoxDecoration(
-                    color: Colors.black54,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.close, color: Colors.white, size: 16),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

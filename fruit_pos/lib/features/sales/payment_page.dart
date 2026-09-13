@@ -13,6 +13,7 @@ import '../../database/app_database.dart';
 import '../../models/sale.dart';
 import '../../shared/widgets/common_widgets.dart';
 import '../../shared/widgets/payment_proof.dart';
+import '../../shared/widgets/photo_view_dialog.dart';
 import '../../sync/sync_manager.dart';
 
 class PaymentPage extends StatefulWidget {
@@ -102,8 +103,7 @@ class _PaymentPageState extends State<PaymentPage> {
 
     try {
       // Coba langsung ke server
-      final res = await api.createSale(sale.toSyncJson());
-      final serverSale = Sale.fromJson(res);
+      await api.createSale(sale.toSyncJson());
       // Simpan salinan lokal (tetap membawa foto bukti) lalu tandai terkirim.
       await db.sales.insertSale(sale);
       await db.sales.markSynced(saleId);
@@ -639,16 +639,26 @@ class _SuccessPage extends StatelessWidget {
                       if (sale.payment?.photo != null ||
                           sale.payment?.photoUrl != null) ...[
                         const SizedBox(height: 12),
-                        const Text('Bukti Pembayaran',
+                        const Text('Bukti Pembayaran (ketuk untuk perbesar)',
                             style: TextStyle(
                                 fontSize: 12,
                                 color: AppColors.textSecondary)),
                         const SizedBox(height: 6),
                         Center(
-                          child: PaymentProof(
-                            image:
-                                sale.payment?.photo ?? sale.payment?.photoUrl,
-                            size: 96,
+                          child: InkWell(
+                            onTap: () {
+                              final image = sale.payment?.photo ??
+                                  sale.payment?.photoUrl;
+                              if (image != null) {
+                                showPhotoViewDialog(context, image);
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(8),
+                            child: PaymentProof(
+                              image: sale.payment?.photo ??
+                                  sale.payment?.photoUrl,
+                              size: 96,
+                            ),
                           ),
                         ),
                       ],
