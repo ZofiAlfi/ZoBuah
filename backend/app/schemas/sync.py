@@ -33,4 +33,8 @@ class SyncPullResponse(BaseModel):
     damage_reports: List[dict] = []
     stock_movements: List[dict] = []
     sales: List[dict] = []
+    # Pengumuman owner per level (info/warning/maintenance), sudah difilter
+    # untuk toko ini. Default dict kosong supaya Flutter versi lama yang
+    # tidak tahu field ini tetap bisa parsing respons.
+    app_settings: dict = {}
     server_time: str

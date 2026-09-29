@@ -150,7 +150,14 @@ class _CashierHomeState extends State<CashierHome> {
               ),
             ),
             const Divider(height: 12),
-            const Expanded(child: SalesPage(embedded: true)),
+            Expanded(
+              child: SalesPage(
+                embedded: true,
+                // Grid produk ikut terisi begitu sync startup selesai, tanpa
+                // kasir harus menekan tombol sync.
+                reloadSignal: _sync.dataRevision,
+              ),
+            ),
           ],
         ),
     );

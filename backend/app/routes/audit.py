@@ -4,14 +4,16 @@ from typing import Optional
 
 from ..database import get_db
 from ..models.audit_log import AuditLog
+from ..models.user import User
 from ..security import require_bos
+from ..tenancy import require_store_id
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
 @router.get("/logs")
 def list_audit_logs(
-    current_user=Depends(require_bos()),
+    current_user: User = Depends(require_bos()),
     db: Session = Depends(get_db),
     user_id: Optional[str] = None,
     action: Optional[str] = None,
@@ -19,7 +21,11 @@ def list_audit_logs(
     date_to: Optional[str] = None,
     limit: int = 200,
 ):
-    query = db.query(AuditLog)
+    # Log audit toko ini saja. Log berisi siapa melakukan apa, jadi membocorkan
+    # log antar toko berarti membocorkan struktur internal toko lain.
+    query = db.query(AuditLog).filter(
+        AuditLog.store_id == require_store_id(current_user)
+    )
     if user_id:
         query = query.filter(AuditLog.user_id == user_id)
     if action:

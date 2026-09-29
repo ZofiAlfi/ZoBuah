@@ -17,10 +17,25 @@ from ..schemas.damage_report import (
 )
 from ..services.stock_service import record_damage, convert_quantity
 from ..security import get_current_user, require_bos, log_audit
+from ..tenancy import require_store_id
 from ..config import settings
 from ..services.storage import storage
 
 router = APIRouter(prefix="/damage-reports", tags=["damage-reports"])
+
+
+def get_report_for_store(db: Session, report_id: UUID, store_id):
+    """Laporan milik toko tertentu, atau 404.
+
+    Tanpa filter ini, BOS toko A bisa menyetujui laporan toko B dan thereby
+    mengurangi stok produk toko B.
+    """
+    report = db.query(DamageReport).filter(
+        DamageReport.id == report_id, DamageReport.store_id == store_id
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Laporan tidak ditemukan")
+    return report
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -30,16 +45,29 @@ def create_damage_report(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    store_id = require_store_id(current_user)
     if body.id:
-        existing = db.query(DamageReport).filter(DamageReport.id == body.id).first()
+        existing = db.query(DamageReport).filter(
+            DamageReport.id == body.id, DamageReport.store_id == store_id
+        ).first()
         if existing:
             raise HTTPException(status_code=409, detail="Laporan sudah tercatat")
 
-    product = db.query(Product).filter(Product.id == body.product_id).first()
+    product = db.query(Product).filter(
+        Product.id == body.product_id, Product.store_id == store_id
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
 
-    employee_id = body.employee_id or current_user.id
+    # BOS approving laporanmilik toko lain akan mengurangi stok produk toko
+    # itu, jadi employee_id dari body tidak boleh dipercaya tanpa dicek.
+    employee_id = current_user.id
+    if body.employee_id and body.employee_id != current_user.id:
+        emp = db.query(User).filter(
+            User.id == body.employee_id, User.store_id == store_id
+        ).first()
+        if emp:
+            employee_id = emp.id
 
     # Konversi kuantitas ke satuan stok produk bila satuannya berbeda.
     qty_in_base = None
@@ -64,6 +92,7 @@ def create_damage_report(
         description=body.description,
         status="PENDING",
         employee_id=employee_id,
+        store_id=store_id,
         created_at=body.created_at or datetime.utcnow(),
     )
     db.add(report)
@@ -102,7 +131,8 @@ def list_damage_reports(
     employee_id: Optional[UUID] = None,
     reason: Optional[str] = None,
 ):
-    query = db.query(DamageReport)
+    store_id = require_store_id(current_user)
+    query = db.query(DamageReport).filter(DamageReport.store_id == store_id)
     if current_user.role == UserRole.KARYAWAN.value:
         query = query.filter(DamageReport.employee_id == current_user.id)
     if status_filter:
@@ -127,9 +157,7 @@ def get_damage_report(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    report = db.query(DamageReport).filter(DamageReport.id == report_id).first()
-    if not report:
-        raise HTTPException(status_code=404, detail="Laporan tidak ditemukan")
+    report = get_report_for_store(db, report_id, require_store_id(current_user))
     if current_user.role == UserRole.KARYAWAN.value and report.employee_id != current_user.id:
         raise HTTPException(status_code=403, detail="Akses ditolak")
     return report.to_dict()
@@ -143,13 +171,14 @@ def approve_damage_report(
     current_user: User = Depends(require_bos()),
     db: Session = Depends(get_db),
 ):
-    report = db.query(DamageReport).filter(DamageReport.id == report_id).first()
-    if not report:
-        raise HTTPException(status_code=404, detail="Laporan tidak ditemukan")
+    store_id = require_store_id(current_user)
+    report = get_report_for_store(db, report_id, store_id)
     if report.status != "PENDING":
         raise HTTPException(status_code=400, detail="Hanya laporan PENDING yang dapat disetujui")
 
-    product = db.query(Product).filter(Product.id == report.product_id).first()
+    product = db.query(Product).filter(
+        Product.id == report.product_id, Product.store_id == store_id
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
 
@@ -180,9 +209,7 @@ def reject_damage_report(
     current_user: User = Depends(require_bos()),
     db: Session = Depends(get_db),
 ):
-    report = db.query(DamageReport).filter(DamageReport.id == report_id).first()
-    if not report:
-        raise HTTPException(status_code=404, detail="Laporan tidak ditemukan")
+    report = get_report_for_store(db, report_id, require_store_id(current_user))
     if report.status != "PENDING":
         raise HTTPException(status_code=400, detail="Hanya laporan PENDING yang dapat ditolak")
 

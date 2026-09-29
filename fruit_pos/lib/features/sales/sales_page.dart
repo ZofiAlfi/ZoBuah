@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/formatters.dart';
@@ -11,12 +12,24 @@ import 'payment_page.dart';
 import 'quantity_dialog.dart';
 
 class SalesPage extends StatefulWidget {
-  const SalesPage({super.key, this.productsLoader, this.embedded = false});
+  const SalesPage({
+    super.key,
+    this.productsLoader,
+    this.embedded = false,
+    this.reloadSignal,
+  });
 
   final Future<List<Product>> Function(String search)? productsLoader;
 
   /// true = ditanam langsung di halaman cashier (tanpa Scaffold/AppBar sendiri).
   final bool embedded;
+
+  /// Dinyalakan ulang oleh pemilik sync setiap kali data lokal berubah.
+  ///
+  /// Sync startup berjalan setelah halaman ini tampil, jadi memuat sekali di
+  /// initState membuat grid produk tetap kosong walau produk dari server sudah
+  /// masuk ke DB lokal. Dulu pengguna harus menekan tombol sync manual.
+  final ValueListenable<int>? reloadSignal;
 
   @override
   State<SalesPage> createState() => _SalesPageState();
@@ -32,11 +45,22 @@ class _SalesPageState extends State<SalesPage> {
   @override
   void initState() {
     super.initState();
+    widget.reloadSignal?.addListener(_load);
     _load();
   }
 
   @override
+  void didUpdateWidget(SalesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reloadSignal != widget.reloadSignal) {
+      oldWidget.reloadSignal?.removeListener(_load);
+      widget.reloadSignal?.addListener(_load);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.reloadSignal?.removeListener(_load);
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -56,6 +80,39 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   double get _total => _cart.fold(0, (sum, item) => sum + item.subtotal);
+
+  /// Kosongkan keranjang juga minta konfirmasi dulu. Tombolnya menumpuk
+  /// beberapa item sekaligus, jadi salah ketuk berarti seluruh pesanan
+  /// pelanggan hilang tanpa jejak di layar.
+  Future<void> _confirmClearCart() async {
+    if (_cart.isEmpty) return;
+    final itemCount = _cart.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Kosongkan keranjang?'),
+        content: Text(
+          '$itemCount item akan dihapus dari keranjang. Transaksi yang belum '
+          'dibayar akan hilang.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            key: const Key('confirm_clear_cart'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Kosongkan'),
+          ),
+        ],
+      ),
+    );
+    if (ok ?? false) setState(_cart.clear);
+  }
 
   Future<void> _pickQuantity(Product product) async {
     final qty = await QuantityDialog.show(context, product);
@@ -154,7 +211,8 @@ class _SalesPageState extends State<SalesPage> {
                         _load();
                       }
                     },
-                    onClear: () => setState(() => _cart.clear()),
+                    onClear: _confirmClearCart,
+                    onRemoveItem: (index) => setState(() => _cart.removeAt(index)),
                   ),
               ],
             );
@@ -228,13 +286,51 @@ class _CartSummary extends StatelessWidget {
   final double total;
   final VoidCallback onCheckout;
   final VoidCallback onClear;
+  final void Function(int index) onRemoveItem;
 
   const _CartSummary({
     required this.items,
     required this.total,
     required this.onCheckout,
     required this.onClear,
+    required this.onRemoveItem,
   });
+
+  Future<void> _confirmRemoveItem(
+    BuildContext context,
+    int index,
+    SaleItem item,
+  ) async {
+    // Konfirmasi dulu, baru hapus. Kasir menekan cukup sering dalam hurry
+    // dan target sentuhnya sempit. Hapus langsung dari tombol kecil bisa
+    // menghilangkan satu baris tanpa disadari, dan yang dikira tersimpan
+    // atau sudah dibayar padahal tidak ada di keranjang.
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Hapus dari keranjang?'),
+        content: Text(
+          '${item.productName} (${Formatters.quantity(item.quantity)} ${item.unit}) '
+          'seilai ${Formatters.currency(item.subtotal)} akan dihapus dari keranjang.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            key: const Key('confirm_remove_item'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+    if (ok ?? false) onRemoveItem(index);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -338,6 +434,17 @@ class _CartSummary extends StatelessWidget {
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
+                      ),
+                      IconButton(
+                        onPressed: () => _confirmRemoveItem(ctx, i, it),
+                        tooltip: 'Hapus item ini',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: AppColors.textSecondary,
+                        ),
+                        key: ValueKey('cart_item_delete_$i'),
                       ),
                     ],
                   ),

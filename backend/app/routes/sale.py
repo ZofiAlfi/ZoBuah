@@ -10,10 +10,16 @@ from ..models.product import Product
 from ..models.sale import Sale, SaleItem, Payment
 from ..schemas.sale import SaleCreate, SaleCancelRequest, SaleResponse
 from ..security import get_current_user, require_bos, log_audit
+from ..tenancy import require_store_id
 from ..services.stock_service import record_sale_quantity, InsufficientStockError
 
 
-def generate_transaction_number(db: Session) -> str:
+def generate_transaction_number(db: Session, store_id) -> str:
+    """Nomor urut per toko per hari.
+
+    Dihitung per store_id supaya dua toko tidak saling membaca nomor, dan
+    nomor toko lain tidak membuat nomor meloncat.
+    """
     from datetime import datetime
     today = datetime.now()
     date_part = today.strftime("%Y%m%d")
@@ -21,7 +27,7 @@ def generate_transaction_number(db: Session) -> str:
     nums = []
     for (tn,) in (
         db.query(Sale.transaction_number)
-        .filter(Sale.transaction_number.like(f"{prefix}%"))
+        .filter(Sale.store_id == store_id, Sale.transaction_number.like(f"{prefix}%"))
         .all()
     ):
         try:
@@ -60,25 +66,32 @@ def create_sale(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    store_id = require_store_id(current_user)
     sale_id = body.id or _uuid.uuid4()
     if body.id:
-        existing = db.query(Sale).filter(Sale.id == body.id).first()
+        existing = db.query(Sale).filter(Sale.id == body.id, Sale.store_id == store_id).first()
         if existing:
             raise HTTPException(status_code=409, detail="Transaksi sudah tercatat")
 
+    # employee_id dari klien WAJIB milik toko ini. Tanpa filter, satu toko bisa
+    # mencatat penjualan atas nama karyawan toko lain.
     employee_id = body.employee_id or current_user.id
-    employee = db.query(User).filter(User.id == employee_id).first()
+    employee = db.query(User).filter(
+        User.id == employee_id, User.store_id == store_id, User.is_active == True
+    ).first()
     if not employee:
         raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
 
-    transaction_number = body.transaction_number or generate_transaction_number(db)
+    transaction_number = body.transaction_number or generate_transaction_number(db, store_id)
 
     total_amount = 0
     total_modal = 0
     items_to_add = []
 
     for item in body.items:
-        product = db.query(Product).filter(Product.id == item.product_id).first()
+        product = db.query(Product).filter(
+            Product.id == item.product_id, Product.store_id == store_id
+        ).first()
         if not product:
             raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
         if not product.is_active:
@@ -109,6 +122,7 @@ def create_sale(
         id=sale_id,
         transaction_number=transaction_number,
         employee_id=employee.id,
+        store_id=store_id,
         total_amount=total_amount,
         total_modal=total_modal,
         total_profit=total_profit,
@@ -168,7 +182,8 @@ def list_sales(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ):
-    query = db.query(Sale)
+    store_id = require_store_id(current_user)
+    query = db.query(Sale).filter(Sale.store_id == store_id)
     if current_user.role == UserRole.KARYAWAN.value:
         query = query.filter(Sale.employee_id == current_user.id)
     if date_from:
@@ -193,10 +208,11 @@ def get_sale(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    store_id = require_store_id(current_user)
     sale = (
         db.query(Sale)
         .options(joinedload(Sale.sale_items), joinedload(Sale.payment))
-        .filter(Sale.id == sale_id)
+        .filter(Sale.id == sale_id, Sale.store_id == store_id)
         .first()
     )
     if not sale:
@@ -215,7 +231,8 @@ def cancel_sale(
     db: Session = Depends(get_db),
 ):
     from datetime import datetime
-    sale = db.query(Sale).filter(Sale.id == sale_id).first()
+    store_id = require_store_id(current_user)
+    sale = db.query(Sale).filter(Sale.id == sale_id, Sale.store_id == store_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
     if sale.status != "COMPLETED":
@@ -227,7 +244,9 @@ def cancel_sale(
     sale.canceled_reason = body.reason
 
     for item in sale.sale_items:
-        product = db.query(Product).filter(Product.id == item.product_id).first()
+        product = db.query(Product).filter(
+            Product.id == item.product_id, Product.store_id == store_id
+        ).first()
         if product:
             from ..services.stock_service import record_stock_movement
             record_stock_movement(

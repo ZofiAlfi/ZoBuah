@@ -1,0 +1,148 @@
+/* ============================================================
+ * Token desain Owner Console — NEUMORPHISM (light + dark).
+ * Semua komponen memakai token ini lewat CSS variable, bukan
+ * hex ad-hoc, supaya ganti tema cukup mengubah atribut
+ * data-bs-theme di <html>.
+ * ============================================================ */
+
+:root,
+[data-bs-theme="light"] {
+  /* Latar & permukaan */
+  --neo-bg: #e8edf4;
+  --neo-surface: #edf1f8;
+  --neo-surface-hi: #f5f8fd;
+  --neo-surface-lo: #dfe6f0;
+  --neo-line: rgba(23, 37, 58, 0.08);
+
+  /* Teks */
+  --neo-text: #16233a;
+  --neo-muted: #5b6a80;
+
+  /* Aksen & status */
+  --neo-acc: #4b7be0;
+  --neo-acc-rgb: 75, 123, 224;
+  --neo-acc-hi: #6b93ec;
+  --neo-acc-lo: #3a66c9;
+  --neo-ok: #1e9d55;
+  --neo-ok-rgb: 30, 157, 85;
+  --neo-warn: #c97e1c;
+  --neo-warn-rgb: 201, 126, 28;
+  --neo-bad: #cf3d3d;
+  --neo-bad-rgb: 207, 61, 61;
+  --neo-info: var(--neo-acc);
+
+  /* Soft tint untuk lencana & alert */
+  --soft-ok: rgba(30, 157, 85, 0.12);
+  --soft-warn: rgba(201, 126, 28, 0.14);
+  --soft-bad: rgba(207, 61, 61, 0.12);
+  --soft-info: rgba(75, 123, 224, 0.14);
+  --soft-acc: rgba(75, 123, 224, 0.14);
+
+  /* Bayangan neumorph: gelap (pr) + terang (pl) berlawanan */
+  --neo-pl: #ffffff;
+  --neo-pr: #b7c2d3;
+  --shadow-raise: 8px 8px 18px var(--neo-pr), -8px -8px 18px var(--neo-pl);
+  --shadow-raise-sm: 5px 5px 12px var(--neo-pr), -5px -5px 12px var(--neo-pl);
+  --shadow-raise-lg: 14px 14px 30px var(--neo-pr), -14px -14px 30px var(--neo-pl);
+  --shadow-inset: inset 4px 4px 9px var(--neo-pr), inset -4px -4px 9px var(--neo-pl);
+  --shadow-inset-sm: inset 2px 2px 5px var(--neo-pr), inset -2px -2px 5px var(--neo-pl);
+
+  /* Glow untuk animasi hover */
+  --glow-acc: rgba(75, 123, 224, 0.45);
+  --glow-ok: rgba(30, 157, 85, 0.4);
+
+  /* Blob aurora */
+  --aurora-1: rgba(75, 123, 224, 0.5);
+  --aurora-2: rgba(30, 157, 85, 0.35);
+  --aurora-3: rgba(201, 126, 28, 0.3);
+
+  /* Radius */
+  --r-card: 18px;
+  --r-btn: 14px;
+  --r-input: 12px;
+  --r-pill: 999px;
+
+  /* Ragam */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --rail: 236px;
+  --topbar: 60px;
+  --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "SF Mono", "Cascadia Mono", ui-monospace, monospace;
+
+  /* Bootstrap dijajarkan ke token, supaya komponen BS (btn-primary,
+   * texto-bg, dsb.) ikut tema tanpa kelas tambahan. */
+  --bs-primary: var(--neo-acc);
+  --bs-primary-rgb: var(--neo-acc-rgb);
+  --bs-success: var(--neo-ok);
+  --bs-success-rgb: var(--neo-ok-rgb);
+  --bs-warning: var(--neo-warn);
+  --bs-warning-rgb: var(--neo-warn-rgb);
+  --bs-danger: var(--neo-bad);
+  --bs-danger-rgb: var(--neo-bad-rgb);
+  --bs-body-bg: var(--neo-bg);
+  --bs-body-color: var(--neo-text);
+  --bs-secondary-color: var(--neo-muted);
+  --bs-border-color: var(--neo-line);
+  --bs-link-color: var(--neo-acc);
+  --bs-link-hover-color: var(--neo-acc-lo);
+  --bs-body-font-family: var(--font);
+}
+
+[data-bs-theme="dark"] {
+  --neo-bg: #141922;
+  --neo-surface: #1a2130;
+  --neo-surface-hi: #242e41;
+  --neo-surface-lo: #121724;
+  --neo-line: rgba(255, 255, 255, 0.09);
+
+  --neo-text: #e8eef6;
+  --neo-muted: #9aa8ba;
+
+  --neo-acc: #7aa2f7;
+  --neo-acc-rgb: 122, 162, 247;
+  --neo-acc-hi: #9cbcfa;
+  --neo-acc-lo: #5c84e8;
+  --neo-ok: #40c47e;
+  --neo-ok-rgb: 64, 196, 126;
+  --neo-warn: #e3a14b;
+  --neo-warn-rgb: 227, 161, 75;
+  --neo-bad: #f06a6a;
+  --neo-bad-rgb: 240, 106, 106;
+
+  --soft-ok: rgba(64, 196, 126, 0.2);
+  --soft-warn: rgba(227, 161, 75, 0.2);
+  --soft-bad: rgba(240, 106, 106, 0.2);
+  --soft-info: rgba(122, 162, 247, 0.22);
+  --soft-acc: rgba(122, 162, 247, 0.22);
+
+  --neo-pl: #262f40;
+  --neo-pr: #0c101a;
+  --glow-acc: rgba(122, 162, 247, 0.4);
+
+  --aurora-1: rgba(122, 162, 247, 0.35);
+  --aurora-2: rgba(64, 196, 126, 0.22);
+  --aurora-3: rgba(227, 161, 75, 0.18);
+
+  --bs-link-hover-color: var(--neo-acc-hi);
+}
+
+/* Angka rupiah memakai tabular figures supaya kolom nilai tidak bergeser
+ * digit saat angka berubah. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.right {
+  text-align: right;
+}

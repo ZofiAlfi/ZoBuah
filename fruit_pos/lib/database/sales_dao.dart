@@ -122,7 +122,23 @@ class SalesDao {
             'photo': sale.payment!.photo ?? sale.payment!.photoUrl,
           }, conflictAlgorithm: ConflictAlgorithm.ignore);
         }
+        continue;
       }
+
+      // Baris sudah ada. Versi sebelumnya berhenti di sini, jadi penjualan
+      // yang dibatalkan BOS tetap berstatus COMPLETED selamanya di perangkat
+      // karyawan: riwayat, angka dashboard, dan laba lokal jadi berbeda
+      // permanen dari server. Yang boleh ditimpa hanya status dari server;
+      // penjualan yang masih PENDING di outbox tidak boleh ditimpa.
+      if (existing.first['sync_status'] == 'PENDING') continue;
+      if (existing.first['status'] == sale.status) continue;
+
+      await database.update(
+        'sales',
+        {'status': sale.status, 'sync_status': 'SYNCED'},
+        where: 'id = ?',
+        whereArgs: [sale.id],
+      );
     }
   }
 

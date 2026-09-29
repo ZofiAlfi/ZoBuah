@@ -2,9 +2,11 @@ import uuid as _uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..utilities.helpers import iso_utc
 from ..models.user import User, UserRole
 from ..models.product import Product
 from ..models.category import Category
@@ -12,10 +14,57 @@ from ..models.sale import Sale, SaleItem, Payment
 from ..models.damage_report import DamageReport, DamagePhoto
 from ..models.stock_movement import StockMovement
 from ..models.sync_event import SyncEvent
+from ..models.broadcast import Broadcast, BroadcastLevel, BroadcastTarget
 from ..schemas.sync import SyncPushRequest, SyncPullRequest, SyncPullResponse
 from ..security import get_current_user, register_device, log_audit
+from ..tenancy import require_store_id
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+
+def _finish_sale(db: Session, data: dict, sale: Sale, entity_id: str, body, store_id):
+    """Simpan pembayaran + catat SyncEvent, lalu commit satu kali.
+
+    Dipisah dari loop utama supaya alur "semua item berhasil -> commit"
+    hanya ada di satu tempat. Kalau pembayaran gagal disimpan, transaksi
+    tetap tercatat karena foto bukti pembayaran bukan hal kritis.
+    """
+    pay = data.get("payment")
+    if pay:
+        payment_kwargs = {}
+        if pay.get("photo"):
+            import base64
+            from ..services.storage import storage
+            try:
+                photo_bytes = base64.b64decode(pay["photo"])
+                rel_key = f"payment/{sale.id}_0.jpg"
+                storage.save_bytes(rel_key, photo_bytes, "image/jpeg")
+                payment_kwargs = {
+                    "file_path": rel_key,
+                    "file_url": storage.url(rel_key),
+                }
+            except Exception:
+                pass
+        db.add(Payment(
+            sale_id=sale.id,
+            method=pay.get("method", "CASH"),
+            amount=pay.get("amount", 0),
+            cash_received=pay.get("cash_received"),
+            change_amount=pay.get("change_amount"),
+            reference=pay.get("reference"),
+            **payment_kwargs,
+        ))
+
+    db.add(SyncEvent(
+        event_type="PUSH",
+        entity_type="sale",
+        entity_id=entity_id,
+        device_id=body.device_id,
+        server_reference=str(sale.id),
+        status="PROCESSED",
+        store_id=store_id,
+    ))
+    db.commit()
 
 
 @router.post("/push")
@@ -24,8 +73,36 @@ def push_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Push hanya untuk akun toko. OWNER sengaja ditolak: dia tidak punya
+    # toko, jadi tidak boleh menulis transaksi ke toko manapun.
+    store_id = require_store_id(current_user)
+
     if body.device_id:
-        register_device(db, body.device_id, platform="android", device_name="android-device")
+        register_device(
+            db, body.device_id, platform="android",
+            device_name="android-device", store_id=store_id,
+        )
+
+    def scoped(model):
+        """Semua lookup entitas WAJIB ter-scope ke store_id."""
+        return db.query(model).filter(model.store_id == store_id)
+
+    def resolve_employee(raw_id):
+        """employee_id dari klien tidak boleh dipercaya mentah-mentah.
+
+        Kalau tidak divalidasi, satu toko bisa mencatat penjualan atas nama
+        karyawan toko lain dan menyedot data karyawannya lewat laporan.
+        Mengembalikan None bila tidak ditemukan, supaya pemanggil MENOLAK
+        item, bukan diam-diam mengganti ke pemanggil sendiri.
+        """
+        if not raw_id:
+            return current_user.id
+        emp = (
+            db.query(User)
+            .filter(User.id == raw_id, User.store_id == store_id, User.is_active == True)
+            .first()
+        )
+        return emp.id if emp else None
 
     accepted = 0
     rejected = 0
@@ -39,7 +116,7 @@ def push_data(
         try:
             # Idempotency check: skip if entity already exists on server
             if entity_type == "sale":
-                existing = db.query(Sale).filter(Sale.id == entity_id).first()
+                existing = scoped(Sale).filter(Sale.id == entity_id).first()
                 if existing:
                     db.add(SyncEvent(
                         event_type="SKIP_DUPLICATE",
@@ -47,21 +124,67 @@ def push_data(
                         entity_id=entity_id,
                         device_id=body.device_id,
                         status="PROCESSED",
+                        store_id=store_id,
                     ))
                     db.commit()
                     rejected += 1
                     results.append({"entity_id": entity_id, "status": "duplicate"})
                     continue
 
-                employee_id = data.get("employee_id") or str(current_user.id)
-                if current_user.role == UserRole.KARYAWAN.value:
-                    employee_id = str(current_user.id)
+                employee_id = resolve_employee(data.get("employee_id"))
+                if employee_id is None:
+                    db.rollback()
+                    rejected += 1
+                    results.append({"entity_id": entity_id, "status": "employee_not_found"})
+                    continue
                 transaction_number = data.get("transaction_number") or _uuid.uuid4().__str__()[:8].upper()
+
+                # products = pasangan (item, produk). Semua HARUS ketemu produk
+                # milik toko ini sebelum transaksi dibuat. Kalau ada yang tidak
+                # ketemu, tolak seluruh item. Versi sebelumnya memakai
+                # `if product:` sehingga produk asing hanya dilewati dan
+                # transaksi tetap tersimpan tanpa item sama sekali.
+                line_items = []
+                missing_product = False
+                inactive_product = None
+                for si in data.get("items", []):
+                    # Produk WAJIB milik toko ini. Tanpa filter ini, satu toko
+                    # bisa menjual produk toko lain dan menguras stoknya.
+                    product = scoped(Product).filter(Product.id == si["product_id"]).first()
+                    if not product:
+                        missing_product = True
+                        break
+                    # Produk nonaktif tidak boleh terjual. Penjualan online
+                    # sudah memeriksanya di sale.py, jadi tanpa cek yang sama
+                    # di sini, kasir yang masih offline bisa menjual produk
+                    # yang baru saja dinonaktifkan BOS dan server tetap
+                    # menerima, termasuk menguras stoknya.
+                    if not product.is_active:
+                        inactive_product = product.name
+                        break
+                    line_items.append((si, product))
+
+                if missing_product:
+                    db.rollback()
+                    rejected += 1
+                    results.append({"entity_id": entity_id, "status": "product_not_found"})
+                    continue
+
+                if inactive_product:
+                    db.rollback()
+                    rejected += 1
+                    results.append({
+                        "entity_id": entity_id,
+                        "status": "product_inactive",
+                        "detail": f"{inactive_product} sudah dinonaktifkan",
+                    })
+                    continue
 
                 sale = Sale(
                     id=entity_id,
                     transaction_number=transaction_number,
                     employee_id=employee_id,
+                    store_id=store_id,
                     total_amount=data.get("total_amount", 0),
                     total_modal=data.get("total_modal", 0),
                     total_profit=data.get("total_profit", 0),
@@ -72,67 +195,35 @@ def push_data(
                 db.add(sale)
                 db.flush()
 
-                for si in data.get("items", []):
-                    product = db.query(Product).filter(Product.id == si["product_id"]).first()
-                    if product:
-                        db.add(SaleItem(
-                            sale_id=sale.id,
-                            product_id=si["product_id"],
-                            product_name=si.get("product_name", product.name),
-                            unit=si.get("unit", product.unit),
-                            unit_price=si.get("unit_price", 0),
-                            modal_price=si.get("modal_price", 0),
-                            quantity=si.get("quantity", 0),
-                            subtotal=si.get("subtotal", 0),
-                        ))
-                        # Recompute local stock deductions for offline sales on server's product
-                        from ..services.stock_service import record_sale_quantity
-                        try:
-                            record_sale_quantity(db, product, sale.id, si.get("quantity", 0), current_user)
-                        except Exception:
-                            db.rollback()
-                            return HTTPException(status_code=400, detail="Stok tidak mencukupi")
-
-                pay = data.get("payment")
-                if pay:
-                    payment_kwargs = {}
-                    if pay.get("photo"):
-                        import base64
-                        from ..services.storage import storage
-                        try:
-                            photo_bytes = base64.b64decode(pay["photo"])
-                            rel_key = f"payment/{sale.id}_0.jpg"
-                            storage.save_bytes(rel_key, photo_bytes, "image/jpeg")
-                            payment_kwargs = {
-                                "file_path": rel_key,
-                                "file_url": storage.url(rel_key),
-                            }
-                        except Exception:
-                            pass
-                    db.add(Payment(
+                for si, product in line_items:
+                    db.add(SaleItem(
                         sale_id=sale.id,
-                        method=pay.get("method", "CASH"),
-                        amount=pay.get("amount", 0),
-                        cash_received=pay.get("cash_received"),
-                        change_amount=pay.get("change_amount"),
-                        reference=pay.get("reference"),
-                        **payment_kwargs,
+                        product_id=si["product_id"],
+                        product_name=si.get("product_name", product.name),
+                        unit=si.get("unit", product.unit),
+                        unit_price=si.get("unit_price", 0),
+                        modal_price=si.get("modal_price", 0),
+                        quantity=si.get("quantity", 0),
+                        subtotal=si.get("subtotal", 0),
                     ))
-
-                db.add(SyncEvent(
-                    event_type="PUSH",
-                    entity_type="sale",
-                    entity_id=entity_id,
-                    device_id=body.device_id,
-                    server_reference=str(sale.id),
-                    status="PROCESSED",
-                ))
-                db.commit()
-                accepted += 1
-                results.append({"entity_id": entity_id, "status": "ok"})
+                    # Potong stok di server karena penjualan dibuat offline di HP.
+                    from ..services.stock_service import record_sale_quantity
+                    try:
+                        record_sale_quantity(db, product, sale.id, si.get("quantity", 0), current_user)
+                    except Exception:
+                        db.rollback()
+                        rejected += 1
+                        results.append({"entity_id": entity_id, "status": "insufficient_stock"})
+                        break
+                else:
+                    # Semua item berhasil diproses: simpan transaksi.
+                    _finish_sale(db, data, sale, entity_id, body, store_id)
+                    accepted += 1
+                    results.append({"entity_id": entity_id, "status": "ok"})
+                continue
 
             elif entity_type == "damage_report":
-                existing = db.query(DamageReport).filter(DamageReport.id == entity_id).first()
+                existing = scoped(DamageReport).filter(DamageReport.id == entity_id).first()
                 if existing:
                     db.add(SyncEvent(
                         event_type="SKIP_DUPLICATE",
@@ -140,21 +231,20 @@ def push_data(
                         entity_id=entity_id,
                         device_id=body.device_id,
                         status="PROCESSED",
+                        store_id=store_id,
                     ))
                     db.commit()
                     rejected += 1
                     results.append({"entity_id": entity_id, "status": "duplicate"})
                     continue
 
-                product = db.query(Product).filter(Product.id == data.get("product_id")).first()
+                product = scoped(Product).filter(Product.id == data.get("product_id")).first()
                 if not product:
                     rejected += 1
                     results.append({"entity_id": entity_id, "status": "product_not_found"})
                     continue
 
-                emp_id = data.get("employee_id") or current_user.id
-                if current_user.role == UserRole.KARYAWAN.value:
-                    emp_id = current_user.id
+                emp_id = resolve_employee(data.get("employee_id"))
 
                 report = DamageReport(
                     id=entity_id,
@@ -165,6 +255,7 @@ def push_data(
                     description=data.get("description"),
                     status="PENDING",
                     employee_id=emp_id,
+                    store_id=store_id,
                     created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
                 )
                 db.add(report)
@@ -191,6 +282,7 @@ def push_data(
                     entity_id=entity_id,
                     device_id=body.device_id,
                     status="PROCESSED",
+                    store_id=store_id,
                 ))
                 db.commit()
                 accepted += 1
@@ -209,6 +301,7 @@ def push_data(
                 device_id=body.device_id,
                 status="FAILED",
                 error_message=str(e),
+                store_id=store_id,
             ))
             db.commit()
             rejected += 1
@@ -223,14 +316,23 @@ def pull_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # POS hanya boleh menarik data tokonya sendiri. Gagal keras kalau akun
+    # belum tertaut ke toko, jangan sampai tanpa filter dan melihat semua.
+    store_id = require_store_id(current_user)
+
     if body.device_id:
-        register_device(db, body.device_id, platform="android", device_name="android-device")
+        register_device(
+            db, body.device_id, platform="android",
+            device_name="android-device", store_id=store_id,
+        )
 
-    products = db.query(Product).all()
-    categories = db.query(Category).all()
+    # Semua query WAJIB ter-scope. Sebelumnya .all() tanpa filter, sehingga
+    # satu toko bisa menarik produk, kategori, dan movements toko lain.
+    products = db.query(Product).filter(Product.store_id == store_id).all()
+    categories = db.query(Category).filter(Category.store_id == store_id).all()
 
-    damage_query = db.query(DamageReport)
-    sales_query = db.query(Sale)
+    damage_query = db.query(DamageReport).filter(DamageReport.store_id == store_id)
+    sales_query = db.query(Sale).filter(Sale.store_id == store_id)
 
     if current_user.role == UserRole.KARYAWAN.value:
         # Karyawan hanya mendapat laporan & transaksi miliknya, dan status approval terbaru
@@ -244,7 +346,12 @@ def pull_data(
 
     damage_reports = damage_query.order_by(DamageReport.created_at.desc()).all()
     sales = sales_query.order_by(Sale.created_at.desc()).limit(500).all()
-    movements = db.query(StockMovement).all()
+    movements = (
+        db.query(StockMovement)
+        .filter(StockMovement.store_id == store_id)
+        .order_by(StockMovement.created_at.desc())
+        .all()
+    )
 
     return SyncPullResponse(
         products=[p.to_dict() for p in products],
@@ -252,5 +359,52 @@ def pull_data(
         damage_reports=[r.to_dict() for r in damage_reports],
         stock_movements=[m.to_dict() for m in movements],
         sales=[s.to_dict() for s in sales],
-        server_time=datetime.utcnow().isoformat(),
+        app_settings=_build_app_settings(db, store_id),
+        server_time=iso_utc(datetime.utcnow()),
     )
+
+
+def _build_app_settings(db: Session, store_id):
+    """Payload broadcast yang aktif untuk toko ini.
+
+    app_settings sebelumnya tidak pernah diisi backend maupun dibaca Flutter,
+    jadi pengumuman owner tidak pernah sampai ke POS. Sekarang dikirim lewat
+    sync pull. Field baru opsional supaya Flutter versi lama tidak error.
+    """
+    now = datetime.utcnow()
+    rows = (
+        db.query(Broadcast)
+        .filter(
+            Broadcast.is_active == True,
+            Broadcast.starts_at <= now,
+            or_(
+                Broadcast.target == BroadcastTarget.ALL,
+                and_(
+                    Broadcast.target == BroadcastTarget.STORE,
+                    Broadcast.store_id == store_id,
+                ),
+            ),
+        )
+        .order_by(Broadcast.starts_at.desc())
+        .all()
+    )
+    settings = {}
+    for b in rows:
+        if b.expires_at and b.expires_at < now:
+            continue
+        # Satu pengumuman per level, yang terbaru menang. Query di atas sudah
+        # terurut starts_at DESC, jadi baris PERTAMA per level adalah yang
+        # terbaru. Assignment biasa akan menimpanya dengan baris berikutnya
+        # dan justru membuat yang paling lama menang, jadi level yang sudah
+        # terisi dilewati.
+        level = b.level.lower()
+        if level in settings:
+            continue
+        settings[level] = {
+            "id": str(b.id),
+            "title": b.title,
+            "body": b.body,
+            "starts_at": iso_utc(b.starts_at),
+            "expires_at": iso_utc(b.expires_at),
+        }
+    return settings

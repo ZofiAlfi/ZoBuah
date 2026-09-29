@@ -10,6 +10,7 @@ from ..models.stock_movement import StockMovement
 from ..schemas.product import StockInRequest
 from ..services.stock_service import record_stock_in, record_stock_adjustment
 from ..security import get_current_user, require_bos, log_audit
+from ..tenancy import require_store_id
 
 router = APIRouter(prefix="/stock", tags=["stock"])
 
@@ -19,7 +20,9 @@ def get_stock(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    products = db.query(Product).all()
+    products = db.query(Product).filter(
+        Product.store_id == require_store_id(current_user)
+    ).all()
     result = []
     for p in products:
         d = p.to_dict()
@@ -35,7 +38,9 @@ def stock_in(
     current_user: User = Depends(require_bos()),
     db: Session = Depends(get_db),
 ):
-    product = db.query(Product).filter(Product.id == body.product_id).first()
+    product = db.query(Product).filter(
+        Product.id == body.product_id, Product.store_id == require_store_id(current_user)
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
 
@@ -59,7 +64,8 @@ def get_movements(
     date_to: Optional[str] = None,
     limit: int = 100,
 ):
-    query = db.query(StockMovement)
+    store_id = require_store_id(current_user)
+    query = db.query(StockMovement).filter(StockMovement.store_id == store_id)
     if product_id:
         query = query.filter(StockMovement.product_id == product_id)
     if movement_type:
@@ -70,11 +76,21 @@ def get_movements(
         query = query.filter(StockMovement.created_at <= f"{date_to} 23:59:59")
     movements = query.order_by(StockMovement.created_at.desc()).limit(limit).all()
 
+    # Satu query produk untuk semua baris, bukan query per movements.
+    product_ids = {m.product_id for m in movements}
+    names = {}
+    if product_ids:
+        names = {
+            p.id: p.name
+            for p in db.query(Product).filter(
+                Product.id.in_(product_ids), Product.store_id == store_id
+            ).all()
+        }
+
     result = []
     for m in movements:
         d = m.to_dict()
-        product = db.query(Product).filter(Product.id == m.product_id).first()
-        d["product_name"] = product.name if product else None
+        d["product_name"] = names.get(m.product_id)
         result.append(d)
     return result
 
@@ -93,7 +109,9 @@ def stock_adjustment(
     if not product_id or quantity == 0:
         raise HTTPException(status_code=400, detail="product_id dan quantity (non-zero) diperlukan")
 
-    product = db.query(Product).filter(Product.id == product_id).first()
+    product = db.query(Product).filter(
+        Product.id == product_id, Product.store_id == require_store_id(current_user)
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
 

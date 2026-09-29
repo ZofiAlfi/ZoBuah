@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -11,14 +12,21 @@ from ..models.damage_report import DamageReport
 from ..models.product import Product
 from ..models.stock_movement import StockMovement
 from ..security import require_bos
+from ..tenancy import require_store_id
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-def get_sales_in_range(db: Session, start, end):
+def get_sales_in_range(db: Session, start, end, store_id):
+    """Transaksi toko tertentu dalam rentang waktu.
+
+    store_id WAJIB passed, bukan opsional: sebelumnya fungsi ini dipakai tanpa
+    filter sehingga setiap laporan menjumlahkan omzet seluruh toko.
+    """
     if end is None:
         end = datetime.now()
     return db.query(Sale).filter(
+        Sale.store_id == store_id,
         Sale.created_at >= start,
         Sale.created_at <= end,
         Sale.status == "COMPLETED",
@@ -46,7 +54,8 @@ def daily_report(
     else:
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     end = today + timedelta(days=1)
-    sales = get_sales_in_range(db, today, end)
+    store_id = require_store_id(current_user)
+    sales = get_sales_in_range(db, today, end, store_id)
     total_amount = sum(float(s.total_amount) for s in sales)
     total_profit = sum(float(s.total_profit) for s in sales)
     item_count = sum(len(s.sale_items) for s in sales)
@@ -69,7 +78,8 @@ def weekly_report(
     today = parse_date(date_str, datetime.now()).date()
     start = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time())
     end = start + timedelta(days=7)
-    sales = get_sales_in_range(db, start, end)
+    store_id = require_store_id(current_user)
+    sales = get_sales_in_range(db, start, end, store_id)
     return {
         "start": start.date().isoformat(),
         "end": (end - timedelta(seconds=1)).date().isoformat(),
@@ -98,7 +108,8 @@ def monthly_report(
         end = datetime(start.year + 1, 1, 1)
     else:
         end = datetime(start.year, start.month + 1, 1)
-    sales = get_sales_in_range(db, start, end)
+    store_id = require_store_id(current_user)
+    sales = get_sales_in_range(db, start, end, store_id)
     return {
         "month": start.strftime("%Y-%m"),
         "total_sales": len(sales),
@@ -114,6 +125,7 @@ def top_products(
     limit: int = 10,
 ):
     from sqlalchemy import func
+    store_id = require_store_id(current_user)
     rows = (
         db.query(
             SaleItem.product_id,
@@ -122,6 +134,12 @@ def top_products(
             func.sum(SaleItem.subtotal).label("total_revenue"),
         )
         .join(Product, SaleItem.product_id == Product.id)
+        .join(Sale, SaleItem.sale_id == Sale.id)
+        .filter(
+            Product.store_id == store_id,
+            Sale.store_id == store_id,
+            Sale.status == "COMPLETED",
+        )
         .group_by(SaleItem.product_id, Product.name)
         .order_by(func.sum(SaleItem.quantity).desc())
         .limit(limit)
@@ -145,7 +163,8 @@ def sales_by_employee(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ):
-    query = db.query(Sale).filter(Sale.status == "COMPLETED")
+    store_id = require_store_id(current_user)
+    query = db.query(Sale).filter(Sale.status == "COMPLETED", Sale.store_id == store_id)
     if date_from:
         query = query.filter(Sale.created_at >= date_from)
     if date_to:
@@ -181,7 +200,8 @@ def damage_report_summary(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ):
-    query = db.query(DamageReport)
+    store_id = require_store_id(current_user)
+    query = db.query(DamageReport).filter(DamageReport.store_id == store_id)
     if date_from:
         query = query.filter(DamageReport.created_at >= date_from)
     if date_to:
@@ -223,14 +243,16 @@ def dashboard(
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
+    store_id = require_store_id(current_user)
 
-    today_sales = get_sales_in_range(db, today_start, today_end)
+    today_sales = get_sales_in_range(db, today_start, today_end, store_id)
     revenue_today = sum(float(s.total_amount) for s in today_sales)
     profit_today = sum(float(s.total_profit) for s in today_sales)
     items_sold = sum(len(s.sale_items) for s in today_sales)
 
     pending_damage = db.query(DamageReport).filter(
-        DamageReport.status == "PENDING"
+        DamageReport.store_id == store_id,
+        DamageReport.status == "PENDING",
     ).all()
 
     damage_loss_value = 0.0
@@ -239,7 +261,9 @@ def dashboard(
 
     low_stock = [
         p.to_dict()
-        for p in db.query(Product).filter(Product.is_active == True).all()
+        for p in db.query(Product).filter(
+            Product.store_id == store_id, Product.is_active == True
+        ).all()
         if float(p.stock or 0) <= float(p.min_stock or 0)
     ]
 
@@ -252,7 +276,13 @@ def dashboard(
         )
         .join(Product, SaleItem.product_id == Product.id)
         .join(Sale, SaleItem.sale_id == Sale.id)
-        .filter(Sale.created_at >= today_start, Sale.created_at <= today_end, Sale.status == "COMPLETED")
+        .filter(
+            Product.store_id == store_id,
+            Sale.store_id == store_id,
+            Sale.created_at >= today_start,
+            Sale.created_at <= today_end,
+            Sale.status == "COMPLETED",
+        )
         .group_by(SaleItem.product_id, Product.name)
         .order_by(func.sum(SaleItem.quantity).desc())
         .limit(5)
@@ -268,7 +298,10 @@ def dashboard(
         func.count(Sale.id).label("count"),
         func.sum(Sale.total_amount).label("amount"),
     ).join(User, Sale.employee_id == User.id).filter(
-        Sale.created_at >= today_start, Sale.created_at <= today_end, Sale.status == "COMPLETED"
+        Sale.store_id == store_id,
+        Sale.created_at >= today_start,
+        Sale.created_at <= today_end,
+        Sale.status == "COMPLETED",
     ).group_by(Sale.employee_id, User.full_name).all()
 
     by_employee = [
@@ -297,7 +330,8 @@ def stock_report(
     date_to: Optional[str] = None,
 ):
     """Laporan stok masuk/keluar dan sisa stok per produk."""
-    movements = db.query(StockMovement)
+    store_id = require_store_id(current_user)
+    movements = db.query(StockMovement).filter(StockMovement.store_id == store_id)
     if date_from:
         movements = movements.filter(StockMovement.created_at >= date_from)
     if date_to:
@@ -313,13 +347,20 @@ def stock_report(
         "adjustment": 0.0,
         "name": None,
     })
+    # Satu query untuk semua produkMovement, bukan query per baris.
+    products = db.query(Product).filter(Product.store_id == store_id).all()
+    product_by_id = {p.id: p for p in products}
+
     for m in movement_rows:
-        p = db.query(Product).filter(Product.id == m.product_id).first()
+        p = product_by_id.get(m.product_id)
         key = str(m.product_id)
         per_product[key]["name"] = p.name if p else m.product_id
         qty = float(m.quantity)
         t = m.movement_type
-        if t == "STOCK_IN":
+        if t in ("STOCK_IN", "INITIAL"):
+            # Produk baru dan produk yang diaktifkan kembali mencatat
+            # "INITIAL"; keduanya berarti stok masuk, bukan sekadar
+            # penyesuaian yang harus disembunyikan dari laporan.
             per_product[key]["stock_in"] += qty
         elif t == "SALE":
             per_product[key]["sale_out"] += qty
@@ -327,15 +368,14 @@ def stock_report(
             per_product[key]["damage_out"] += qty
         elif t == "RETURN":
             per_product[key]["return_in"] += qty
+        elif t == "RETURN_OUT":
+            per_product[key]["return_in"] -= qty
         elif t in ("ADJUSTMENT", "ADJUSTMENT_NEGATIVE"):
             per_product[key]["adjustment"] += qty if t == "ADJUSTMENT" else -qty
 
-    products = db.query(Product).all()
-    current_stock = {str(p.id): p for p in products}
-
     result = []
     for product_id, d in per_product.items():
-        p = current_stock.get(product_id)
+        p = product_by_id.get(uuid.UUID(product_id))
         result.append({
             "product_id": product_id,
             "product_name": d["name"],
@@ -371,7 +411,8 @@ def profit_report(
     date_to: Optional[str] = None,
 ):
     """Laporan laba kotor & kerugian waste untuk periode tertentu."""
-    sales_q = db.query(Sale).filter(Sale.status == "COMPLETED")
+    store_id = require_store_id(current_user)
+    sales_q = db.query(Sale).filter(Sale.status == "COMPLETED", Sale.store_id == store_id)
     if date_from:
         sales_q = sales_q.filter(Sale.created_at >= date_from)
     if date_to:
@@ -384,7 +425,9 @@ def profit_report(
     total_discount = sum(float(s.discount) for s in sales)
     sales_count = len(sales)
 
-    damage_q = db.query(DamageReport).filter(DamageReport.status == "APPROVED")
+    damage_q = db.query(DamageReport).filter(
+        DamageReport.status == "APPROVED", DamageReport.store_id == store_id
+    )
     if date_from:
         damage_q = damage_q.filter(DamageReport.created_at >= date_from)
     if date_to:

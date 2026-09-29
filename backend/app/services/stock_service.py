@@ -64,6 +64,9 @@ def record_stock_movement(
         reference_type=reference_type,
         notes=notes,
         user_id=user.id,
+        # Milik toko, bukan milik user. Kalau diturunkan dari user, gerakan
+        # stok yang dilakukan Owner akan hilang dari laporan toko.
+        store_id=product.store_id,
         created_at=datetime.utcnow(),
     )
     db.add(movement)

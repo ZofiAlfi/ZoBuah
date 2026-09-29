@@ -40,5 +40,9 @@ class UserResponse(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    # store_id ikut dikembalikan supaya POS tahu user ini milik toko mana
+    # tanpa perlu endpoint tambahan. Null hanya untuk akun OWNER.
+    store_id: Optional[uuid.UUID] = None
+    store_name: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

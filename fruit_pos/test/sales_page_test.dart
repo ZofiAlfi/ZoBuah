@@ -69,7 +69,9 @@ void main() {
     expect(find.text('Rp 36.000'), findsNWidgets(2));
   });
 
-  testWidgets('tombol kosongkan membersihkan keranjang', (tester) async {
+  testWidgets('tombol kosongkan membersihkan keranjang setelah konfirmasi', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(home: SalesPage(productsLoader: (_) async => [_apelFuji()])),
     );
@@ -79,6 +81,8 @@ void main() {
     expect(find.byKey(const Key('checkout')), findsOneWidget);
 
     await tester.tap(find.byTooltip('Kosongkan keranjang'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm_clear_cart')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('checkout')), findsNothing);
@@ -141,5 +145,140 @@ void main() {
 
     expect(find.text('3 buah'), findsOneWidget);
     expect(find.text('Rp 30.000'), findsNWidgets(2));
+  });
+
+  testWidgets('produk dari server muncul sendiri setelah reloadSignal menyala', (
+    tester,
+  ) async {
+    // Regresi: daftar produk hanya dimuat sekali di initState. Karena sync
+    // startup selesai setelah halaman tampil, kasir melihat "Produk tidak
+    // ditemukan" walau produk sudah tersimpan di DB lokal, dan harus menekan
+    // tombol sync manual untuk melihatnya.
+    var tersimpanDiLokal = <Product>[];
+    final signal = ValueNotifier<int>(0);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SalesPage(
+          productsLoader: (_) async => tersimpanDiLokal,
+          reloadSignal: signal,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Produk tidak ditemukan'), findsOneWidget);
+
+    // Sync selesai dan mengisi DB lokal.
+    tersimpanDiLokal = [_apelFuji()];
+    signal.value++;
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apel Fuji'), findsOneWidget);
+    expect(find.text('Produk tidak ditemukan'), findsNothing);
+  });
+
+  testWidgets('hapus per item minta konfirmasi dan tidak langsung hilang', (
+    tester,
+  ) async {
+    Product kelapa() => Product(
+      id: 'p2',
+      name: 'Kelapa Tua',
+      unit: 'buah',
+      modalPrice: 7000,
+      sellingPrice: 10000,
+      stock: 12,
+      minStock: 2,
+      isActive: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: SalesPage(productsLoader: (_) async => [_apelFuji(), kelapa()])),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(_fujiBtn));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('qty_add')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('prod_p2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('qty_add')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 item'), findsOneWidget);
+
+    // Ketuk tombol hapus pada baris pertama.
+    await tester.tap(find.byKey(const ValueKey('cart_item_delete_0')));
+    await tester.pumpAndSettle();
+
+    // Dialog konfirmasi muncul dan barang BELUM hilang.
+    expect(find.text('Hapus dari keranjang?'), findsOneWidget);
+    expect(find.textContaining('Apel Fuji'), findsWidgets);
+    expect(find.text('2 item'), findsOneWidget);
+
+    // Batal: isi keranjang utuh.
+    await tester.tap(find.text('Batal'));
+    await tester.pumpAndSettle();
+    expect(find.text('2 item'), findsOneWidget);
+
+    // Ulangi, kali ini konfirmasi.
+    await tester.tap(find.byKey(const ValueKey('cart_item_delete_0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm_remove_item')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 item'), findsOneWidget);
+    expect(find.text('Kelapa Tua'), findsWidgets);
+    expect(find.byKey(_fujiBtn), findsOneWidget);
+  });
+
+  testWidgets('kosongkan keranjang minta konfirmasi', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: SalesPage(productsLoader: (_) async => [_apelFuji()])),
+    );
+    await tester.pumpAndSettle();
+    await _openAndConfirm(tester);
+    expect(find.text('1 item'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Kosongkan keranjang'));
+    await tester.pumpAndSettle();
+    expect(find.text('Kosongkan keranjang?'), findsOneWidget);
+    expect(find.text('1 item'), findsOneWidget);
+
+    await tester.tap(find.text('Batal'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 item'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Kosongkan keranjang'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm_clear_cart')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('checkout')), findsNothing);
+  });
+
+  testWidgets('keranjang tidak hilang saat reloadSignal menyala', (
+    tester,
+  ) async {
+    final signal = ValueNotifier<int>(0);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SalesPage(
+          productsLoader: (_) async => [_apelFuji()],
+          reloadSignal: signal,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openAndConfirm(tester);
+    expect(find.text('1 item'), findsOneWidget);
+
+    signal.value++;
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 item'), findsOneWidget);
+    expect(find.byKey(const Key('checkout')), findsOneWidget);
   });
 }

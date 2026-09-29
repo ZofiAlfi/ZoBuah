@@ -24,6 +24,7 @@ class AppConstants {
   static const String prefUsername = 'user_username';
   static const String prefDeviceId = 'device_id';
   static const String prefLastSync = 'last_sync_at';
+  static const String prefNotices = 'owner_notices';
 
   static const List<String> units = [
     'kg', 'gram', 'buah', 'sisir', 'ikat', 'dus', 'paket', 'liter', 'loyang',

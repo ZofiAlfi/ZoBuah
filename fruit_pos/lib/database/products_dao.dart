@@ -122,15 +122,53 @@ class ProductsDao {
     await batch.commit(noResult: true);
   }
 
-  Future<List<Category>> getAllCategories() async {
+  /// Nonaktifkan baris lokal yang tidak ada lagi di full dump server.
+  ///
+  /// Ini catching-up untuk produk yang dihapus keras di server sebelum soft
+  /// delete diperbaiki: barisnya hilang dari payload, jadi tidak ada is_active
+  /// yang bisa menimpanya lewat upsert. Karena products di-pull sebagai full
+  /// dump (tanpa filter last_sync), "tidak ada di payload" memang berarti
+  /// "tidak ada lagi di server".
+  ///
+  /// Sengaja return 0 kalau presentIds kosong: pull yang gagal di tengah jalan
+  /// tidak boleh menonaktifkan seluruh katalog lokal.
+  Future<int> deactivateMissingProducts(Set<String> presentIds) async {
     final database = await _db;
-    final rows = await database.query('categories', orderBy: 'name ASC');
+    if (presentIds.isEmpty) return 0;
+    final placeholders = List.filled(presentIds.length, '?').join(',');
+    return database.rawUpdate(
+      'UPDATE products SET is_active = 0 WHERE is_active = 1 '
+      'AND id NOT IN ($placeholders)',
+      presentIds.toList(),
+    );
+  }
+
+  /// Sama seperti [deactivateMissingProducts], untuk kategori.
+  Future<int> deactivateMissingCategories(Set<String> presentIds) async {
+    final database = await _db;
+    if (presentIds.isEmpty) return 0;
+    final placeholders = List.filled(presentIds.length, '?').join(',');
+    return database.rawUpdate(
+      'UPDATE categories SET is_active = 0 WHERE is_active = 1 '
+      'AND id NOT IN ($placeholders)',
+      presentIds.toList(),
+    );
+  }
+
+  Future<List<Category>> getAllCategories({bool activeOnly = false}) async {
+    final database = await _db;
+    final rows = await database.query(
+      'categories',
+      where: activeOnly ? 'is_active = 1' : null,
+      orderBy: 'name ASC',
+    );
     return rows
         .map(
           (r) => Category(
             id: r['id'] as String,
             name: r['name'] as String,
             description: r['description'] as String?,
+            isActive: r['is_active'] == 1,
           ),
         )
         .toList();

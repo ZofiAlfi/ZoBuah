@@ -60,6 +60,10 @@ Future<void> main() async {
   await connectivity.initialize();
 
   await authState.initialize();
+  // Muat pengumuman owner dari perangkat dulu, baru coba tarik yang baru.
+  // Kalau perangkat offline, pull akan gagal dan tanpa baris ini pengumuman
+  // yang tersimpan tidak akan pernah tampil.
+  await syncManager.restoreNotices();
   await syncManager.syncNow();
   await syncManager.startPeriodicSync();
 
@@ -133,7 +137,9 @@ class _FruitPosAppState extends State<FruitPosApp> with WidgetsBindingObserver {
         initialRoute: '/',
         routes: {
           '/': (_) => const AuthGate(),
-          '/sales': (_) => const SalesPage(),
+          '/sales': (context) => SalesPage(
+            reloadSignal: context.read<SyncManager>().dataRevision,
+          ),
           '/products': (_) => const ProductsPage(),
           '/damage/new': (_) => const NewDamageReportPage(),
           '/damage/list': (_) => const DamageListPage(),

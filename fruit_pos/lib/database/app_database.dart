@@ -23,7 +23,7 @@ class AppDatabase {
     final path = join(dir, 'fruit_pos.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -34,6 +34,14 @@ class AppDatabase {
         if (oldV < 3) {
           await db.execute('ALTER TABLE payments ADD COLUMN photo TEXT');
         }
+        if (oldV < 4) {
+          // Kategori butuh penanda aktif supaya kategori yang dinonaktifkan
+          // BOS bisa hilang dari perangkat. Tanpa kolom ini, penghapusan
+          // kategori tidak pernah sampai ke kasir.
+          await db.execute(
+            'ALTER TABLE categories ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1',
+          );
+        }
       },
     );
   }
@@ -43,7 +51,8 @@ class AppDatabase {
       CREATE TABLE categories (
         id TEXT PRIMARY KEY,
         name TEXT,
-        description TEXT
+        description TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1
       )
     ''');
 

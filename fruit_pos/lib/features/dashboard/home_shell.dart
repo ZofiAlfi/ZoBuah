@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../api/api_service.dart';
 import '../../auth/auth_state.dart';
 import '../../core/formatters.dart';
+import '../../models/broadcast_notice.dart';
 import '../../services/notification_service.dart';
 import '../../sync/sync_manager.dart';
 import '../cashier/cashier_home.dart';
@@ -12,6 +13,7 @@ import '../settings/settings_page.dart';
 import '../stock/stock_page.dart';
 import '../transactions/transactions_page.dart';
 import 'dashboard_page.dart';
+import 'owner_notice_banner.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -24,13 +26,28 @@ class _HomeShellState extends State<HomeShell> {
   static const _seenKey = 'bos_seen_damage_ids';
   int _index = 0;
   late final SyncManager _sync;
+  Set<String> _dismissedNotices = <String>{};
 
   @override
   void initState() {
     super.initState();
     _sync = context.read<SyncManager>();
     _sync.addListener(_onSyncChanged);
+    _loadDismissedNotices();
     WidgetsBinding.instance.addPostFrameCallback((_) => _onSyncChanged());
+  }
+
+  Future<void> _loadDismissedNotices() async {
+    final ids = await OwnerNoticeBanner.dismissedIds();
+    if (!mounted) return;
+    setState(() => _dismissedNotices = ids);
+  }
+
+  /// Menutup pengumuman atas harus membuat pengumuman di bawahnya langsung
+  /// tampil, jadi daftar yang ditutup hidup di sini, bukan di dalam banner.
+  void _dismissNotice(String id) {
+    setState(() => _dismissedNotices = {..._dismissedNotices, id});
+    OwnerNoticeBanner.markDismissed(id);
   }
 
   @override
@@ -74,8 +91,37 @@ class _HomeShellState extends State<HomeShell> {
     final auth = context.watch<AuthState>();
     final user = auth.user;
 
-    // Karyawan: satu halaman kasir lengkap (kiosk).
-    if (user != null && !user.isBos) return const CashierHome();
+    // Pengumuman owner berlaku untuk semua peran, jadi banner dipasang di luar
+    // percabangan BOS/Karyawan. Yang sudah ditutup difilter di sini supaya
+    // menutup pengumuman atas langsung memunculkan pengumuman berikutnya.
+    // ValueListenableBuilder dipakai, bukan _sync.notices.value, karena
+    // ValueNotifier tidak membangun ulang HomeShell saat nilainya berubah.
+    final noticeBanner = ValueListenableBuilder<List<BroadcastNotice>>(
+      valueListenable: _sync.notices,
+      builder: (context, notices, _) {
+        final visible = notices
+            .where((n) => !_dismissedNotices.contains(n.id))
+            .toList();
+        if (visible.isEmpty) return const SizedBox.shrink();
+        final notice = visible.first;
+        return OwnerNoticeBanner(
+          key: ValueKey(notice.id),
+          notice: notice,
+          onDismiss: () => _dismissNotice(notice.id),
+        );
+      },
+    );
+
+    // Karyawan: satu halaman kasir lengkap (kiosk). CashierHome sudah
+    // menjadi Scaffold-nya sendiri, jadi di sini tidak perlu Scaffold kedua.
+    if (user != null && !user.isBos) {
+      return Column(
+        children: [
+          noticeBanner,
+          const Expanded(child: CashierHome()),
+        ],
+      );
+    }
 
     final pages = <Widget>[
       const DashboardPage(),
@@ -85,7 +131,12 @@ class _HomeShellState extends State<HomeShell> {
     ];
 
     return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
+      body: Column(
+        children: [
+          noticeBanner,
+          Expanded(child: IndexedStack(index: _index, children: pages)),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),

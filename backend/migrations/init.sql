@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS products (
     min_stock     NUMERIC(12,3) NOT NULL DEFAULT 0,
     is_active     BOOLEAN NOT NULL DEFAULT TRUE,
     description   TEXT,
+    -- Ditambahkan model Product tapi pernah tertinggal di init.sql, sehingga
+    -- fitur upload foto produk gagal di database yang dibuat dari berkas ini.
+    photo_path    VARCHAR(255),
     created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -64,9 +67,11 @@ CREATE INDEX IF NOT EXISTS idx_stockm_product ON stock_movements(product_id);
 CREATE INDEX IF NOT EXISTS idx_stockm_created ON stock_movements(created_at);
 
 -- ---------- sales ----------
+-- transaction_number TIDAK unique global. Unik per toko lewat
+-- ux_sales_store_transaction_number, jadi dua toko boleh punya nomor sama.
 CREATE TABLE IF NOT EXISTS sales (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    transaction_number VARCHAR(40) NOT NULL UNIQUE,
+    transaction_number VARCHAR(40) NOT NULL,
     employee_id       UUID NOT NULL REFERENCES users(id),
     total_amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
     total_modal       NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -81,6 +86,7 @@ CREATE TABLE IF NOT EXISTS sales (
 );
 CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at);
 CREATE INDEX IF NOT EXISTS idx_sales_employee ON sales(employee_id);
+CREATE INDEX IF NOT EXISTS idx_sales_transaction_number ON sales(transaction_number);
 
 -- ---------- sale_items ----------
 CREATE TABLE IF NOT EXISTS sale_items (
@@ -116,6 +122,10 @@ CREATE TABLE IF NOT EXISTS damage_reports (
     product_id      UUID NOT NULL REFERENCES products(id),
     quantity        NUMERIC(12,3) NOT NULL,
     unit            VARCHAR(20) NOT NULL,
+    -- Kuantitas yang sudah dikonversi ke satuan dasar produk (mis. kg), dipakai
+    -- saat approval untuk mengurangi stok. Sama_modelnya pernah tertinggal di
+    -- init.sql, sehingga approve laporan rusak di database baru.
+    qty_in_base_unit NUMERIC(12,3),
     reason          VARCHAR(50) NOT NULL,
     description     TEXT,
     status          VARCHAR(20) NOT NULL DEFAULT 'PENDING',
@@ -181,19 +191,14 @@ CREATE TABLE IF NOT EXISTS sync_events (
 CREATE INDEX IF NOT EXISTS idx_syncevent_entity ON sync_events(entity_id);
 
 -- =====================================================================
--- Data Awal: Kategori buah dasar
+-- CATATAN: file ini SCHEMA-ONLY, tidak ada data awal.
+--
+-- Sebelumnya file ini siembra kategori buah dan akun BOS. Keduanya
+-- sekarang ditangani main.py:seed_initial_data() karena setelah migrasi
+-- 003_multi_tenant.sql kategori unik per toko (store_id, name) dan BOS
+-- juga per-toko, sedangkan init.sql tidak tahu store_id mana yang
+-- dipakai. Seed di sini membuat init.sql tidak idempoten (ON CONFLICT
+-- (name) tidak lagi punya constraint yang cocok) dan tidak pernah
+-- membuat akun OWNER.
 -- =====================================================================
-INSERT INTO categories (name) VALUES
-    ('Apel'), ('Jeruk'), ('Mangga'), ('Pisang'), ('Semangka'),
-    ('Alpukat'), ('Nanas'), ('Kelapa'), ('Lainnya')
-ON CONFLICT (name) DO NOTHING;
 
--- =====================================================================
--- Akun Bos default (password: bos12345 - GANTI setelah login pertama!)
--- Hash bcrypt di bawah berasal dari 'bos12345'
--- =====================================================================
-INSERT INTO users (username, full_name, password_hash, role)
-SELECT 'bos', 'Pemilik Toko',
-       '$2b$12$hM6pkG1JqVq/q9Q4WWXpVeEvJQlPmKPy1NlBvR6lG0m2yWXyKQYhq',
-       'BOS'
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'BOS');

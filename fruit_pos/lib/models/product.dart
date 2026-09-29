@@ -39,7 +39,10 @@ class Product {
     sellingPrice: (json['selling_price'] ?? 0).toDouble(),
     stock: (json['stock'] ?? 0).toDouble(),
     minStock: (json['min_stock'] ?? 0).toDouble(),
-    isActive: json['is_active'] ?? true,
+    // `== true`, bukan `?? true`. Kolom ini nullable di server sebelum
+    // migrasi 006, dan null di JSON akan terbaca sebagai aktif sehingga
+    // produk yang sebenarnya dinonaktifkan masih bisa dijual.
+    isActive: json['is_active'] == true,
     description: json['description']?.toString(),
     photoUrl: json['photo_url']?.toString(),
   );
