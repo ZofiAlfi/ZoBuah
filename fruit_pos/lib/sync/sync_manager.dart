@@ -203,12 +203,24 @@ class SyncManager extends ChangeNotifier {
       }
 
       final sales = data['sales'] as List? ?? [];
+      final parsedSales = sales
+          .map((s) => Sale.fromJson(s as Map<String, dynamic>))
+          .toList();
       if (sales.isNotEmpty) {
-        final parsed = sales
-            .map((s) => Sale.fromJson(s as Map<String, dynamic>))
-            .toList();
-        await salesDao.upsertFromServer(parsed);
+        await salesDao.upsertFromServer(parsedSales);
         changed = true;
+      }
+
+      // Rekonsiliasi riwayat transaksi: hanya pada FULL pull (startup,
+      // lastSync=null) yang dikirim server secara lengkap. Hapus penjualan
+      // lokal SYNCED yang tidak diakui server lagi (mis. data UAT diganti
+      // total) supaya cache tidak menumpuk transaksi toko/akun lama yang
+      // seharusnya sudah tidak ada. Kalau payload terpotong (sales_complete
+      // bukan true), rekonsiliasi dilewati agar tidak menghapus salah.
+      if (lastSync == null && data['sales_complete'] == true) {
+        final reconciled = parsedSales.map((s) => s.id).whereType<String>().toSet();
+        final removed = await salesDao.reconcileWithServer(reconciled);
+        if (removed > 0) changed = true;
       }
 
       await _applyNotices(data['app_settings']);

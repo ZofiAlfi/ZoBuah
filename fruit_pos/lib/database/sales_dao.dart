@@ -142,6 +142,43 @@ class SalesDao {
     }
   }
 
+  /// Rekonsiliasi riwayat transaksi lokal terhadap daftar id yang diakui
+  /// server untuk akun yang sedang login.
+  ///
+  /// Dipanggil hanya setelah FULL pull (tanpa last_sync) yang TAHU bahwa
+  /// payload sales lengkap (server mengirim `sales_complete`). Menghapus
+  /// penjualan lokal yang sudah SYNCED tetapi tidak ada lagi di daftar server
+  /// -- mis. data UAT diganti total, atau perangkat dipakai berganti akun
+  /// karyawan -- sehingga riwayat transaksi di HP tidak menyimpan data toko/
+  /// akun lain selamanya. Penjualan yang masih PENDING (offline, belum
+  /// terkirim ke server) tidak pernah dihapus.
+  ///
+  /// Mengembalikan jumlah baris sales yang dihapus.
+  Future<int> reconcileWithServer(Set<String> serverSaleIds) async {
+    final database = await _db;
+    final rows = await database.query(
+      'sales',
+      columns: ['id'],
+      where: 'sync_status = ?',
+      whereArgs: ['SYNCED'],
+    );
+    final orphanIds = rows
+        .map((r) => r['id'] as String?)
+        .whereType<String>()
+        .where((id) => !serverSaleIds.contains(id))
+        .toList();
+    if (orphanIds.isEmpty) return 0;
+
+    final batch = database.batch();
+    for (final id in orphanIds) {
+      batch.delete('sale_items', where: 'sale_id = ?', whereArgs: [id]);
+      batch.delete('payments', where: 'sale_id = ?', whereArgs: [id]);
+      batch.delete('sales', where: 'id = ?', whereArgs: [id]);
+    }
+    await batch.commit(noResult: true);
+    return orphanIds.length;
+  }
+
   Sale _saleFromRow(Map<String, dynamic> row, List<Map<String, dynamic>> items,
       List<Map<String, dynamic>> payments) {
     return Sale(

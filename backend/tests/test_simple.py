@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.product import Product
+from app.models.sale import Sale
 from app.models.stock_movement import StockMovement
 from app.models.store import Plan, Store, StoreStatus
 from app.models.user import User, UserRole
@@ -382,3 +383,89 @@ def test_produk_soft_delete_dan_rekonsiliasi(bos_client):
             db.commit()
         finally:
             db.close()
+
+
+def test_sync_pull_sales_complete_bendera(bos_client):
+    """sales_complete true kalau payload sales lengkap, false kalau terpotong 500.
+
+    Klien POS memakai bendera ini untuk memutuskan apakah boleh merekonsiliasi
+    riwayat transaksi lokal: full pull yang terpotong (>= 500 transaksi) tidak
+    boleh dijadikan dasar menghapus riwayat yang tidak ikut terkirim.
+    """
+    login = bos_client.post(
+        "/api/v1/auth/login",
+        json={"username": BOS_USERNAME, "password": BOS_PASSWORD},
+    )
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    db = SessionLocal()
+    user_id = None
+    store_id = None
+    try:
+        user = db.query(User).filter(User.username == BOS_USERNAME).one()
+        user_id = user.id
+        store_id = user.store_id
+
+        # Muat dulu berapa transaksi yang sudah ada milik akun ini, lalu isi
+        # sampai total > 500 supaya payload full pull pasti terpotong.
+        existing = (
+            db.query(Sale)
+            .filter(Sale.store_id == store_id, Sale.employee_id == user_id)
+            .count()
+        )
+        for i in range(505 - existing if existing < 505 else 0):
+            db.add(
+                Sale(
+                    store_id=store_id,
+                    employee_id=user_id,
+                    transaction_number=f"TST-{i}-{uuid.uuid4().hex[:8]}",
+                )
+            )
+        db.commit()
+
+        # Full pull (tanpa last_sync_at): terpotong pada batas 500.
+        full = bos_client.post(
+            "/api/v1/sync/pull", json={"device_id": None}, headers=headers
+        )
+        assert full.status_code == 200, full.text
+        assert full.json()["sales_complete"] is False, (
+            "full pull dengan >= 500 transaksi harus menandai sales terpotong"
+        )
+        assert len(full.json()["sales"]) == 500
+
+        # Delta pull (dengan last_sync_at): bendera tidak dihitung, tetap true.
+        delta = bos_client.post(
+            "/api/v1/sync/pull",
+            json={"device_id": None, "last_sync_at": "2020-01-01T00:00:00Z"},
+            headers=headers,
+        )
+        assert delta.status_code == 200, delta.text
+        assert delta.json()["sales_complete"] is True
+
+        # Hapus transaksi TST- saja: full pull berikutnya lengkap dan bendera
+        # true, tanpa menghiraukan transaksi akun lain yang mungkin ada.
+        db.query(Sale).filter(
+            Sale.store_id == store_id,
+            Sale.employee_id == user_id,
+            Sale.transaction_number.like("TST-%"),
+        ).delete(synchronize_session=False)
+        db.commit()
+
+        kosong = bos_client.post(
+            "/api/v1/sync/pull", json={"device_id": None}, headers=headers
+        )
+        assert kosong.status_code == 200, kosong.text
+        assert kosong.json()["sales_complete"] is True
+        assert all(
+            not s["transaction_number"].startswith("TST-")
+            for s in kosong.json()["sales"]
+        ), "transaksi TST- masih tersisa setelah dihapus"
+    finally:
+        db.rollback()
+        db.query(Sale).filter(
+            Sale.transaction_number.like("TST-%")
+        ).delete(synchronize_session=False)
+        db.commit()
+        db.close()

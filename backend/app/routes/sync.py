@@ -345,7 +345,13 @@ def pull_data(
         sales_query = sales_query.filter(Sale.updated_at >= since)
 
     damage_reports = damage_query.order_by(DamageReport.created_at.desc()).all()
+    sales_complete = True
     sales = sales_query.order_by(Sale.created_at.desc()).limit(500).all()
+    if body.last_sync_at is None:
+        # Full pull (first sync / startup): payload sales adalah daftar kanonik
+        # scope akun ini SELAMA tidak terpotong. Kalau pas 500, tidak bisa
+        # dijadiakan dasar menghapus riwayat lokal yang tidak ikut terkirim.
+        sales_complete = len(sales) < 500
     movements = (
         db.query(StockMovement)
         .filter(StockMovement.store_id == store_id)
@@ -359,6 +365,7 @@ def pull_data(
         damage_reports=[r.to_dict() for r in damage_reports],
         stock_movements=[m.to_dict() for m in movements],
         sales=[s.to_dict() for s in sales],
+        sales_complete=sales_complete,
         app_settings=_build_app_settings(db, store_id),
         server_time=iso_utc(datetime.utcnow()),
     )

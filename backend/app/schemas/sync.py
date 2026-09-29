@@ -33,6 +33,11 @@ class SyncPullResponse(BaseModel):
     damage_reports: List[dict] = []
     stock_movements: List[dict] = []
     sales: List[dict] = []
+    # True kalau daftar sales di respons ini LENGKAP untuk scope akun yang
+    # login, false kalau terpotong batas (limit 500 terbaru dulu). Klien
+    # memakai bendera ini supaya rekonsiliasi tidak menghapus riwayat lokal
+    # saat payload belum tentu memuat semua transaksi.
+    sales_complete: bool = True
     # Pengumuman owner per level (info/warning/maintenance), sudah difilter
     # untuk toko ini. Default dict kosong supaya Flutter versi lama yang
     # tidak tahu field ini tetap bisa parsing respons.
