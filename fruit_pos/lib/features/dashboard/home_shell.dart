@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -13,7 +13,7 @@ import '../settings/settings_page.dart';
 import '../stock/stock_page.dart';
 import '../transactions/transactions_page.dart';
 import 'dashboard_page.dart';
-import 'owner_notice_banner.dart';
+import 'owner_notice_ticker.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -26,7 +26,7 @@ class _HomeShellState extends State<HomeShell> {
   static const _seenKey = 'bos_seen_damage_ids';
   int _index = 0;
   late final SyncManager _sync;
-  Set<String> _dismissedNotices = <String>{};
+  Set<String> _hiddenNotices = <String>{};
 
   @override
   void initState() {
@@ -38,16 +38,20 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _loadDismissedNotices() async {
-    final ids = await OwnerNoticeBanner.dismissedIds();
+    final ids = await OwnerNoticeTicker.dismissedIds();
     if (!mounted) return;
-    setState(() => _dismissedNotices = ids);
+    setState(() => _hiddenNotices = ids);
   }
 
-  /// Menutup pengumuman atas harus membuat pengumuman di bawahnya langsung
-  /// tampil, jadi daftar yang ditutup hidup di sini, bukan di dalam banner.
-  void _dismissNotice(String id) {
-    setState(() => _dismissedNotices = {..._dismissedNotices, id});
-    OwnerNoticeBanner.markDismissed(id);
+  /// Bar pengumuman menggabungkan semua pengumuman yang belum ditutup jadi
+  /// satu baris, jadi saat bar disembunyikan semua id yang sedang tampil ikut
+  /// disembunyikan.
+  ///
+  /// Penutupan permanen ditangani [OwnerNoticeTicker] sendiri lewat
+  /// `markDismissed`, jadi di sini cukup 상태 tampilannya saja.
+  void _hideNotices(List<String> ids) {
+    if (ids.isEmpty) return;
+    setState(() => _hiddenNotices = {..._hiddenNotices, ...ids});
   }
 
   @override
@@ -91,23 +95,23 @@ class _HomeShellState extends State<HomeShell> {
     final auth = context.watch<AuthState>();
     final user = auth.user;
 
-    // Pengumuman owner berlaku untuk semua peran, jadi banner dipasang di luar
-    // percabangan BOS/Karyawan. Yang sudah ditutup difilter di sini supaya
-    // menutup pengumuman atas langsung memunculkan pengumuman berikutnya.
+    // Pengumuman owner berlaku untuk semua peran, jadi bar-nya dipasang di
+    // luar percabangan BOS/Karyawan. Yang sudah ditutup difilter di sini
+    // supaya menutup bar langsung memunculkan pengumuman berikutnya.
     // ValueListenableBuilder dipakai, bukan _sync.notices.value, karena
     // ValueNotifier tidak membangun ulang HomeShell saat nilainya berubah.
-    final noticeBanner = ValueListenableBuilder<List<BroadcastNotice>>(
+    final noticeTicker = ValueListenableBuilder<List<BroadcastNotice>>(
       valueListenable: _sync.notices,
       builder: (context, notices, _) {
         final visible = notices
-            .where((n) => !_dismissedNotices.contains(n.id))
+            .where((n) => !_hiddenNotices.contains(n.id))
             .toList();
         if (visible.isEmpty) return const SizedBox.shrink();
-        final notice = visible.first;
-        return OwnerNoticeBanner(
-          key: ValueKey(notice.id),
-          notice: notice,
-          onDismiss: () => _dismissNotice(notice.id),
+        return OwnerNoticeTicker(
+          key: ValueKey(visible.map((n) => n.id).join('|')),
+          notices: visible,
+          onAutoHidden: _hideNotices,
+          onDismissed: _hideNotices,
         );
       },
     );
@@ -117,7 +121,7 @@ class _HomeShellState extends State<HomeShell> {
     if (user != null && !user.isBos) {
       return Column(
         children: [
-          noticeBanner,
+          noticeTicker,
           const Expanded(child: CashierHome()),
         ],
       );
@@ -133,7 +137,7 @@ class _HomeShellState extends State<HomeShell> {
     return Scaffold(
       body: Column(
         children: [
-          noticeBanner,
+          noticeTicker,
           Expanded(child: IndexedStack(index: _index, children: pages)),
         ],
       ),

@@ -125,21 +125,100 @@ class SalesDao {
         continue;
       }
 
-      // Baris sudah ada. Versi sebelumnya berhenti di sini, jadi penjualan
-      // yang dibatalkan BOS tetap berstatus COMPLETED selamanya di perangkat
-      // karyawan: riwayat, angka dashboard, dan laba lokal jadi berbeda
-      // permanen dari server. Yang boleh ditimpa hanya status dari server;
-      // penjualan yang masih PENDING di outbox tidak boleh ditimpa.
+      // Baris sudah ada. Dua-duanya harus ditulis ulang dari server.
+      //
+      // Versi sebelumnya hanya menulis kolom `status` dan langsung `continue`
+      // kalau status-nya sama. Akibatnya koreksi nominal dari Owner Console
+      // tidak pernah sampai ke perangkat: owner mengubah 0,8 kg jadi 0,7 kg,
+      // server menulis ulang total_amount dan sale_items-nya, tapi perangkat
+      // tetap menampilkan angka lama selamanya. sale_items juga di-insert
+      // dengan ConflictAlgorithm.ignore, jadi baris lamanya tidak pernah
+      // tergantikan.
+      //
+      // Yang tetap tidak boleh ditimpa: penjualan lokal yang masih PENDING,
+      // karena isinya belum pernah sampai ke server dan akan hilang permanen.
       if (existing.first['sync_status'] == 'PENDING') continue;
-      if (existing.first['status'] == sale.status) continue;
+
+      final row = existing.first;
+      // `created_at` ikut dibandingkan supaya koreksi jam di server ikut
+      // diterima. Transaksi yang dibuat saat offline pernah terkirim dengan jam
+      // LOKAL perangkat, lalu dilabeli `Z` oleh server, sehingga tampil meleset
+      // 7 jam di Owner Console. Saat server mengirim waktu yang benar, baris
+      // lokal harus ditulis ulang juga -- kalau tidak, transact ini selamanya
+      // menampilkan tanggal yang salah di perangkat.
+      //
+      // Bandingkan sebagai string: kedua sisi memakai format ISO yang sama
+      // (6 digit pecahan + suffix Z), jadi ini tidak memicu penulisan ulang
+      // berulang pada tiap pull.
+      final waktuBerbeda = row['created_at'] != sale.createdAt;
+      final nominalBerbeda =
+          _numTidek(row['total_amount']) != _numTidek(sale.totalAmount) ||
+              _numTidek(row['total_modal']) != _numTidek(sale.totalModal) ||
+              _numTidek(row['total_profit']) != _numTidek(sale.totalProfit) ||
+              _numTidek(row['discount']) != _numTidek(sale.discount) ||
+              row['status'] != sale.status ||
+              row['transaction_number'] != sale.transactionNumber ||
+              row['employee_name'] != sale.employeeName;
+      if (!nominalBerbeda && !waktuBerbeda) continue;
 
       await database.update(
         'sales',
-        {'status': sale.status, 'sync_status': 'SYNCED'},
+        {
+          'transaction_number': sale.transactionNumber,
+          'employee_id': sale.employeeId,
+          'employee_name': sale.employeeName,
+          'total_amount': sale.totalAmount,
+          'total_modal': sale.totalModal,
+          'total_profit': sale.totalProfit,
+          'discount': sale.discount,
+          'status': sale.status,
+          'created_at': sale.createdAt,
+          'sync_status': 'SYNCED',
+        },
         where: 'id = ?',
         whereArgs: [sale.id],
       );
+
+      // Baris detail tidak punya primary key dari server, jadi isinya tidak
+      // bisa dicocokkan satu per satu. Ganti total: hapus lama, tulis ulang.
+      // Kalau tidak, item yang dikoreksi owner dan item yang dihapus owner
+      // sama-sama tetap muncul di perangkat.
+      await database.delete('sale_items',
+          where: 'sale_id = ?', whereArgs: [sale.id]);
+      await database.delete('payments',
+          where: 'sale_id = ?', whereArgs: [sale.id]);
+      for (final item in sale.items) {
+        await database.insert('sale_items', {
+          'sale_id': sale.id,
+          'product_id': item.productId,
+          'product_name': item.productName,
+          'unit': item.unit,
+          'unit_price': item.unitPrice,
+          'modal_price': item.modalPrice,
+          'quantity': item.quantity,
+          'subtotal': item.subtotal,
+        });
+      }
+      if (sale.payment != null) {
+        await database.insert('payments', {
+          'sale_id': sale.id,
+          'method': sale.payment!.method,
+          'amount': sale.payment!.amount,
+          'cash_received': sale.payment!.cashReceived,
+          'change_amount': sale.payment!.changeAmount,
+          'reference': sale.payment!.reference,
+          'photo': sale.payment!.photo ?? sale.payment!.photoUrl,
+        });
+      }
     }
+  }
+
+  /// Bandingkan angka dengan toleransi pembulatan, karena SQLite menyimpan
+  /// REAL dan 12600.0 bisa tersimpan sebagai 12600.0000001.
+  static double _numTidek(Object? v) {
+    if (v == null) return -1;
+    if (v is num) return double.parse(v.toStringAsFixed(2));
+    return double.tryParse(v.toString()) ?? -1;
   }
 
   /// Rekonsiliasi riwayat transaksi lokal terhadap daftar id yang diakui

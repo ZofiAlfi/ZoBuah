@@ -13,6 +13,18 @@ class AppConstants {
   );
   static const String apiV1 = '$baseUrl/api/v1';
 
+  /// True kalau API-nya Accessible tanpa internet, yaitu lewat `adb reverse`
+  /// (localhost) atau emulator loopback. Pada mode ini device bisa saja
+  /// tidak punya Wi-Fi/mibil/data sama sekali, jadi status konektivitas
+  /// tidak boleh dipakai untuk decide "offline".
+  static bool get isLoopbackApi {
+    final host = Uri.tryParse(baseUrl)?.host ?? '';
+    return host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '10.0.2.2' ||
+        host == '0.0.0.0';
+  }
+
   static const String dbName = 'fruit_pos.db';
   static const int dbVersion = 1;
 

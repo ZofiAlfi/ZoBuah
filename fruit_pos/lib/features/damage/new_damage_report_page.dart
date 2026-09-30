@@ -107,7 +107,10 @@ class _NewDamageReportPageState extends State<NewDamageReportPage> {
     final api = context.read<ApiService>();
 
     final reportId = const Uuid().v4();
-    final now = DateTime.now().toIso8601String();
+    // UTC, bukan jam lokal: kolom created_at di server disimpan sebagai UTC dan
+    // Owner Console menghormati penanda `Z`. Mengirim jam lokal membuat laporan
+    // meleset 7 jam di Owner Console.
+    final now = DateTime.now().toUtc().toIso8601String();
 
     final report = DamageReport(
       id: reportId,

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 
+import '../core/constants.dart';
+
 class ConnectivityService {
   final Connectivity _connectivity = Connectivity();
   final ValueNotifier<bool> isOnline = ValueNotifier<bool>(true);
@@ -21,6 +23,11 @@ class ConnectivityService {
   }
 
   bool _anyOnline(List<ConnectivityResult> results) {
+    // `adb reverse` membuat localhost di HP meneruskan ke PC tanpa perlu
+    // koneksi internet apa pun. Kalau API-nya loopback, status konektivitas
+    // tidak relevan: mencoba request lebih baik daripada menandai offline
+    // lalu menampilkan dashboard kosong.
+    if (AppConstants.isLoopbackApi) return true;
     return results.any((r) =>
         r == ConnectivityResult.mobile || r == ConnectivityResult.wifi || r == ConnectivityResult.ethernet);
   }

@@ -5,6 +5,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../api/api_exception.dart';
 import '../api/api_service.dart';
 import '../core/constants.dart';
 import '../database/outbox_dao.dart';
@@ -16,6 +17,7 @@ import '../models/broadcast_notice.dart';
 import '../models/damage_report.dart';
 import '../models/product.dart';
 import '../models/sale.dart' show Sale;
+import 'connectivity_service.dart';
 
 class SyncManager extends ChangeNotifier {
   final ApiService apiService;
@@ -23,6 +25,7 @@ class SyncManager extends ChangeNotifier {
   final ProductsDao productsDao;
   final SalesDao salesDao;
   final DamageDao damageDao;
+  final ConnectivityService connectivity;
   final ValueNotifier<bool> isSyncing = ValueNotifier<bool>(false);
   final ValueNotifier<int> pendingCount = ValueNotifier<int>(0);
 
@@ -44,8 +47,24 @@ class SyncManager extends ChangeNotifier {
   final ValueNotifier<List<BroadcastNotice>> notices =
       ValueNotifier<List<BroadcastNotice>>([]);
 
+  /// Pesan error sinkronisasi terakhir yang dilihat pengguna.
+  ///
+  /// Sebelumnya kegagalan pull hanya ditulis lewat `debugPrint`, yang hilang
+  /// total di build release. Akibatnya satu-satunya gejala yang terlihat adalah
+  /// "Belum ada transaksi" atau data lama yang tidak pernah berubah, tanpa
+  /// penjelasan apa pun. Nilai ini tampil di halaman Pengaturan.
+  final ValueNotifier<String?> lastSyncError = ValueNotifier<String?>(null);
+
   Timer? _timer;
   String? _deviceId;
+
+  /// Set true kalau ada `forcePull` yang datang saat sync lain masih jalan.
+  ///
+  /// Sebelumnya `syncNow` langsung `return` kalau `isSyncing` masih true, jadi
+  /// full pull yang dipanggil setelah login bisa hilang begitu saja tanpa
+  /// ada jejaknya. Itu membuat satu-satunya cara memulihkan riwayat transaksi
+  /// (full pull dengan `last_sync_at = null`) justru gagal diam-diam.
+  bool _forcePullQueued = false;
 
   SyncManager({
     required this.apiService,
@@ -53,6 +72,7 @@ class SyncManager extends ChangeNotifier {
     required this.productsDao,
     required this.salesDao,
     required this.damageDao,
+    required this.connectivity,
   });
 
   Future<String?> getDeviceId() async {
@@ -77,33 +97,78 @@ class SyncManager extends ChangeNotifier {
   }
 
   Future<void> startPeriodicSync({Duration interval = const Duration(seconds: 30)}) async {
-    await syncNow(forcePull: true);
+    // Timer dipasang lebih dulu supaya ritme 30 detik jalan sejak awal, lalu
+    // full pull pertama dijalankan di background (tidak memblokir startup).
     _timer?.cancel();
     _timer = Timer.periodic(interval, (_) => syncNow());
+    await syncNow(forcePull: true);
   }
 
   Future<void> syncNow({bool forcePull = false}) async {
-    if (isSyncing.value) return;
+    if (isSyncing.value) {
+      // Full pull selalu dijalankan, hanya ditunda. Kalau tidak, permintaan
+      // full pull setelah login bisa hilang dan riwayat transaksi tidak pernah
+      // pernah terisi.
+      if (forcePull) _forcePullQueued = true;
+      return;
+    }
     isSyncing.value = true;
     try {
+      if (!connectivity.isOnline.value) {
+        lastSyncError.value = null;
+        return;
+      }
       final deviceId = await getDeviceId();
       final prefs = await SharedPreferences.getInstance();
       final lastSync = prefs.getString(AppConstants.prefLastSync);
       var dataChanged = await _push();
-      if (await _pull(deviceId ?? '', forcePull ? null : lastSync)) {
-        dataChanged = true;
-      }
-      await prefs.setString(
-          AppConstants.prefLastSync, DateTime.now().toUtc().toIso8601String());
-      await outboxDao.removeSynced();
+      final pull = await _pull(deviceId ?? '', forcePull ? null : lastSync);
+      dataChanged = dataChanged || pull.changed;
       if (dataChanged) _bumpDataRevision();
+
+      // Watermark hanya boleh maju kalau pull benar-benar sampai ke server.
+      // Sebelumnya baris ini berjalan tanpa syarat: pull yang gagal (misalnya
+      // 401 saat app start sebelum login) tetap menimpa `last_sync_at` dengan
+      // jam sekarang. Akibatnya server menyaring seluruh riwayat transaksi
+      // pada pull berikutnya dan tidak pernah mengirimnya lagi -- satu kali
+      // kegagalan saja membuat transaksi hilang permanen di perangkat.
+      //
+      // Nilainya juga `server_time`, bukan jam perangkat, supaya jam HP yang
+      // meleset tidak lagi bisa melewati perubahan yang baru ditulis server.
+      if (pull.serverTime case final watermark?) {
+        await prefs.setString(AppConstants.prefLastSync, watermark);
+        lastSyncError.value = null;
+      } else if (pull.error case final message?) {
+        lastSyncError.value = message;
+      }
+      await outboxDao.removeSynced();
     } catch (e) {
+      final message = _describeSyncError(e);
+      lastSyncError.value = message;
       debugPrint('Sync gagal: $e');
     } finally {
       await refreshPendingCount();
       isSyncing.value = false;
       notifyListeners();
+      if (_forcePullQueued) {
+        _forcePullQueued = false;
+        unawaited(syncNow(forcePull: true));
+      }
     }
+  }
+
+  /// Error sync harus enak dibaca pengguna, bukan tumpukan tipe Dart.
+  String _describeSyncError(Object e) {
+    if (e is ApiException) {
+      if (e.statusCode == 0) {
+        return 'Tidak bisa terhubung ke server. Data belum tersinkron.';
+      }
+      if (e.isUnauthorized) {
+        return 'Sesi tidak valid. Silakan login kembali.';
+      }
+      return 'Server menolak sinkronisasi: ${e.message}';
+    }
+    return 'Sinkronisasi gagal. Buka Pengaturan lalu ketuk "Sinkronisasi bermasalah" untuk mencoba lagi.';
   }
 
   void _bumpDataRevision() {
@@ -114,7 +179,6 @@ class SyncManager extends ChangeNotifier {
   Future<bool> _push() async {
     final entries = await outboxDao.getPending(limit: 50);
     if (entries.isEmpty) return false;
-
     final items = entries
         .map((e) => SyncPushEntity(
               entityType: e.entityType,
@@ -155,8 +219,16 @@ class SyncManager extends ChangeNotifier {
     return changed;
   }
 
-  /// Mengembalikan true kalau ada tabel lokal yang ditulis hasil pull.
-  Future<bool> _pull(String deviceId, String? lastSync) async {
+  /// Tarik data dari server dan tulis ke SQLite lokal.
+  ///
+  /// `serverTime` hanya diisi kalau seluruh pull BERHASIL. Nilai itulah yang
+  /// boleh disimpan sebagai `last_sync_at`. Kalau pull gagal di tengah jalan,
+  /// `serverTime` harus tetap null: memajukan watermark setelah pull gagal
+  /// membuat data yang memang perlu diambil hilang selamanya.
+  Future<({bool changed, String? serverTime, String? error})> _pull(
+    String deviceId,
+    String? lastSync,
+  ) async {
     var changed = false;
     try {
       final data = await apiService.syncPull(
@@ -224,10 +296,21 @@ class SyncManager extends ChangeNotifier {
       }
 
       await _applyNotices(data['app_settings']);
+      final serverTime = data['server_time']?.toString();
+      return (
+        changed: changed,
+        serverTime: (serverTime != null && serverTime.isNotEmpty)
+            ? serverTime
+            : null,
+        error: null,
+      );
     } catch (e) {
+      // Jangan sampai `serverTime` terisi di jalur gagal: pemanggil memakai
+      // null-ness nilai ini sebagai sinyal "pull jangan dimajukan".
+      final message = _describeSyncError(e);
       debugPrint('Pull gagal: $e');
+      return (changed: changed, serverTime: null, error: message);
     }
-    return changed;
   }
 
   /// Baca pengumuman owner dari hasil pull.

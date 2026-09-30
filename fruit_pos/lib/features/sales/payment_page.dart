@@ -71,6 +71,14 @@ class _PaymentPageState extends State<PaymentPage> {
     final db = AppDatabase.instance;
     final syncManager = context.read<SyncManager>();
 
+    // `now` dipakai untuk NOMOR transaksi, jadi harus waktu lokal: nomor
+    // pengesahan yang dicetak di struk harus sama dengan tanggal kasir membua-
+    // tnya. `created_at` ke server harus UTC, karena kolomnya disimpan sebagai
+    // UTC dan Owner Console membaca penanda `Z` lalu mengonversi ke zona
+    // tampil. Kalau jam lokal ikut terkirim, setiap transaksi POS meleset 7 jam
+    // dan bergeser ke tanggal berikutnya di Owner Console -- terutama yang
+    // dibuat saat offline, karena saat online server masih sempat memakai jamnya
+    // sendiri.
     final now = DateTime.now();
     final saleId = const Uuid().v4();
     final transactionNumber = 'TRX-${now.year}${_two(now.month)}${_two(now.day)}-${saleId.substring(0, 3).toUpperCase()}';
@@ -88,7 +96,7 @@ class _PaymentPageState extends State<PaymentPage> {
       totalProfit: _total - totalModal,
       discount: _discount,
       status: 'COMPLETED',
-      createdAt: now.toIso8601String(),
+      createdAt: now.toUtc().toIso8601String(),
       items: widget.items,
       payment: Payment(
         method: _method,

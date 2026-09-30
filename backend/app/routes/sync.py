@@ -1,8 +1,8 @@
 import uuid as _uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -190,7 +190,7 @@ def push_data(
                     total_profit=data.get("total_profit", 0),
                     discount=data.get("discount", 0),
                     status=data.get("status", "COMPLETED"),
-                    created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
+                    created_at=_as_stored_utc(data.get("created_at")),
                 )
                 db.add(sale)
                 db.flush()
@@ -256,7 +256,7 @@ def push_data(
                     status="PENDING",
                     employee_id=emp_id,
                     store_id=store_id,
-                    created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
+                    created_at=_as_stored_utc(data.get("created_at")),
                 )
                 db.add(report)
 
@@ -340,9 +340,20 @@ def pull_data(
         sales_query = sales_query.filter(Sale.employee_id == current_user.id)
 
     if body.last_sync_at:
-        since = body.last_sync_at
+        since = _as_naive_utc(body.last_sync_at)
         damage_query = damage_query.filter(DamageReport.updated_at >= since)
         sales_query = sales_query.filter(Sale.updated_at >= since)
+
+    # Dicapture SEBELUM query, bukan saat response dirakit.
+    #
+    # Perangkat memakai nilai ini sebagai `last_sync_at` untuk pull berikutnya
+    # dan menyaring dengan `updated_at >= last_sync_at`. Kalau timestamp diambil
+    # setelah query, perubahan yang masuk di antara query dan response bisa punya
+    # `updated_at` lebih kecil dari watermark padahal tidak pernah dikirim --
+    # jadi terlewat selamanya. Dengan diambil lebih dulu, semua perubahan
+    # setelah titik ini pasti lebih besar dari watermark dan akan diambil pada
+    # pull berikutnya.
+    sync_started_at = datetime.utcnow()
 
     damage_reports = damage_query.order_by(DamageReport.created_at.desc()).all()
     sales_complete = True
@@ -367,8 +378,47 @@ def pull_data(
         sales=[s.to_dict() for s in sales],
         sales_complete=sales_complete,
         app_settings=_build_app_settings(db, store_id),
-        server_time=iso_utc(datetime.utcnow()),
+        server_time=iso_utc(sync_started_at),
     )
+
+
+def _as_naive_utc(value: datetime) -> datetime:
+    """Samakan `last_sync_at` dari perangkat dengan kolom `updated_at` di DB.
+
+    Kolom `updated_at` dibuat `TIMESTAMP WITHOUT TIME ZONE` (lihat model) dan
+    diisi `datetime.utcnow()`, jadi isinya UTC TANPA penanda timezone. Perangkat
+    meanwhile mengirim watermark sebagai ISO ber-timezone (`...Z`).
+
+    PostgreSQL tidak bisa membandingkan keduanya langsung: kolom naive dibaca
+    sebagai waktu pada TimeZone sesi, dan pada DB ini TimeZone = Asia/Bangkok
+    (+07). Akibatnya setiap baris terlihat 7 jam lebih tua dari aslinya dan
+    `updated_at >= since` tidak pernah benar -- incremental pull selalu
+    mengembalikan 0 transaksi, sehingga koreksi dari Owner Console baru muncul
+    setelah aplikasi dijalankan ulang (full pull). Itu terlihat sebagai
+    "riwayat di HP tidak live".
+
+    Ubah watermark menjadi UTC naive supaya perbandingannya terjadi di ruang
+    waktu yang sama dengan penyimpanan.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _as_stored_utc(value) -> datetime:
+    """Samakan `created_at` dari perangkat dengan kolom penyimpanan (UTC naive).
+
+    Perangkat mengirim `created_at` ber-timezone (`...Z`). Kolomnya
+    `TIMESTAMP WITHOUT TIME ZONE` berisi UTC, jadi penanda zona harus
+    dikonversi lalu dilepas, bukan dibuang begitu saja -- kalau tidak, jam
+    aslinya bergeser 7 jam di semua tampilan yang menghormati `Z` (Owner
+    Console, laporan harian), dan transaksi dibuat lewat malam bisa
+    tercatat di tanggal yang salah.
+    """
+    if not value:
+        return datetime.utcnow()
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return _as_naive_utc(parsed)
 
 
 def _build_app_settings(db: Session, store_id):

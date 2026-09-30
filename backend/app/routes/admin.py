@@ -53,7 +53,8 @@ from ..schemas.admin import (
     PasswordResetResult,
     PlanRow,
     RevenuePoint,
-    SaleEditRequest,
+SaleEditRequest,
+    SaleDeleteRequest,
     StoreCreate,
     StoreDetail,
     StoreListItem,
@@ -962,7 +963,7 @@ def _sale_edit_history(db: Session, sale: Sale) -> list:
     rows = (
         db.query(AuditLog)
         .filter(
-            AuditLog.action == "SALE_EDIT",
+            AuditLog.action.in_(["SALE_EDIT", "SALE_DELETE"]),
             AuditLog.entity_id == str(sale.id),
         )
         .order_by(AuditLog.created_at.desc())
@@ -1215,6 +1216,62 @@ def edit_store_sale(
     db.refresh(sale)
     log_audit(
         db, owner, "SALE_EDIT", "sale", sale.id,
+        {
+            "transaction_number": sale.transaction_number,
+            "reason": body.reason,
+            "before": before,
+            "after": _sale_edit_snapshot(sale),
+        },
+        request,
+    )
+    return _as_admin_sale_detail(db, sale)
+
+
+@router.post("/stores/{store_id}/sales/{sale_id}/delete", response_model=AdminSaleDetail)
+def delete_store_sale(
+    store_id: UUID,
+    sale_id: UUID,
+    body: SaleDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    """Hapus (soft) transaksi oleh owner: status jadi batal, stok kembali.
+
+    Bukan penghapusan fisik — riwayat, laporan, dan audit tetap ada supaya bisa
+    dikontrol/kontrol. Mirip cancel milik BOS, tapi dicatat sebagai SALE_DELETE
+    dan boleh ditarik kembali tanpa syarat jam. Fisik yang "hilang" hanya dari
+    statistik: seluruh KPI owner memfilter status COMPLETED."""
+    sale = _get_store_sale_or_404(db, store_id, sale_id)
+    if sale.status != "COMPLETED":
+        raise HTTPException(
+            status_code=400, detail="Hanya transaksi berstatus selesai yang bisa dihapus"
+        )
+
+    before = _sale_edit_snapshot(sale)
+
+    # Kembalikan stok item transaksi ke gudang, satu transaksi atomik.
+    for item in sale.sale_items:
+        product = db.query(Product).filter(
+            Product.id == item.product_id, Product.store_id == store_id
+        ).first()
+        if product is not None:
+            _apply_stock(
+                db, product, "RETURN", float(item.quantity), owner,
+                sale.id, "sale_delete",
+                f"Hapus transaksi {sale.transaction_number}",
+            )
+
+    sale.status = "CANCELED"
+    sale.canceled_at = datetime.utcnow()
+    sale.canceled_by = owner.id
+    sale.canceled_reason = body.reason
+    sale.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(sale)
+    log_audit(
+        db, owner, "SALE_DELETE", "sale", sale.id,
         {
             "transaction_number": sale.transaction_number,
             "reason": body.reason,

@@ -1,0 +1,9 @@
+# Test yang menyentuh AppDatabase.instance semua memakai nama file yang sama
+# (`fruit_pos.db`) dan singleton-nya hidup per isolate. Kalau dua file test
+# jalan bersamaan, salah satunya menghapus file database sementara yang
+# sedang dipakai yang lain -> "database is locked" dan hasil test tidak
+# bisa dipercaya.
+#
+# Menjalankan suite secara serial menghapus bentuk flakiness ini. Repo ini
+# kecil, jadi selisih waktunya tidak terasa.
+concurrency: 1

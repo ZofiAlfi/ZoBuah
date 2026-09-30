@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 
 export function Aurora({ intensity = 1 }: { intensity?: number }) {
@@ -161,7 +162,7 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
 }) {
-  return (
+  return createPortal(
     <div
       className="overlay"
       onMouseDown={(e) => {
@@ -183,8 +184,9 @@ export function Modal({
         </div>
         <div className="modal-body">{children}</div>
         {footer ? <div className="modal-foot">{footer}</div> : null}
-      </div>
-    </div>
+</div>
+    </div>,
+    document.body,
   );
 }
 

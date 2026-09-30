@@ -10,7 +10,7 @@ sendiri oleh fixture, lalu dimatikan lagi setelah selesai.
 
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import pytest
@@ -18,13 +18,14 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.product import Product
-from app.models.sale import Sale
+from app.models.sale import Sale, SaleItem, Payment
 from app.models.stock_movement import StockMovement
 from app.models.store import Plan, Store, StoreStatus
 from app.models.user import User, UserRole
 from app.database import SessionLocal
 from app.security import hash_password
 from app.services.stock_service import convert_quantity
+from app.routes.sync import _as_naive_utc
 
 
 client = TestClient(app)
@@ -383,6 +384,286 @@ def test_produk_soft_delete_dan_rekonsiliasi(bos_client):
             db.commit()
         finally:
             db.close()
+
+
+def test_sync_pull_delta_mengirim_transaksi_baru(bos_client):
+    """Delta pull harus mengembalikan transaksi yang baru saja diperbarui.
+
+    Ini mengunci bug "riwayat di HP tidak live". Kolom `updated_at` adalah
+    TIMESTAMP WITHOUT TIME ZONE berisi UTC, sementara perangkat mengirim
+    `last_sync_at` sebagai ISO ber-timezone (`...Z`). PostgreSQL membaca kolom
+    naive itu memakai TimeZone sesi (Asia/Bangkok, +07), sehingga setiap baris
+    terlihat 7 jam lebih tua dan `updated_at >= since` tidak pernah cocok.
+    Akibatnya delta pull selalu mengembalikan 0 transaksi: koreksi dari Owner
+    Console baru terlihat di POS setelah aplikasi dijalankan ulang (full pull).
+    """
+    login = bos_client.post(
+        "/api/v1/auth/login",
+        json={"username": BOS_USERNAME, "password": BOS_PASSWORD},
+    )
+    assert login.status_code == 200, login.text
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    db = SessionLocal()
+    nomor = f"DLT-{uuid.uuid4().hex[:8]}"
+    try:
+        user = db.query(User).filter(User.username == BOS_USERNAME).one()
+        db.add(
+            Sale(
+                store_id=user.store_id,
+                employee_id=user.id,
+                transaction_number=nomor,
+                total_amount=1000,
+                updated_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
+
+        # Watermark 5 menit lalu, dalam bentuk ber-timezone persis seperti
+        # yang dikirim aplikasi.
+        since = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        assert since.endswith("+00:00")
+
+        r = bos_client.post(
+            "/api/v1/sync/pull",
+            json={"device_id": None, "last_sync_at": since},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        terkirim = [s for s in r.json()["sales"] if s["transaction_number"] == nomor]
+        assert terkirim, (
+            "delta pull tidak mengirim transaksi yang baru diperbarui; "
+            "riwayat POS tidak akan pernah live"
+        )
+        assert float(terkirim[0]["total_amount"]) == 1000
+    finally:
+        db.query(Sale).filter(Sale.transaction_number == nomor).delete(
+            synchronize_session=False
+        )
+        db.commit()
+        db.close()
+
+
+def test_sync_pull_delta_batas_zona_waktu(bos_client):
+    """Watermark harus dinormalkan ke UTC naive, bukan dipakai apa adanya."""
+    dari_app = datetime(2026, 9, 30, 16, 0, 0, tzinfo=timezone.utc)
+    assert _as_naive_utc(dari_app) == datetime(2026, 9, 30, 16, 0, 0)
+    assert _as_naive_utc(dari_app).tzinfo is None, "harus naive agar bisa dibandingkan"
+
+    # Watermark yang sudah naive (dtLokal tanpa zona) tidak boleh di geser.
+    sudah_naive = datetime(2026, 9, 30, 16, 0, 0)
+    assert _as_naive_utc(sudah_naive) == sudah_naive
+
+    # Watermark dari zona lain harus dikonversi ke UTC, bukan dibuang zonanya.
+    wib = datetime(2026, 9, 30, 23, 0, 0, tzinfo=timezone(timedelta(hours=7)))
+    assert _as_naive_utc(wib) == datetime(2026, 9, 30, 16, 0, 0)
+
+
+def test_sync_pull_delta_mengirim_laporan_baru(bos_client):
+    """Damage report memakai filter `updated_at` yang sama, jadi punya bug
+    timezone yang sama. Laporan baru harus muncul di delta pull juga."""
+    from app.models.damage_report import DamageReport
+
+    login = bos_client.post(
+        "/api/v1/auth/login",
+        json={"username": BOS_USERNAME, "password": BOS_PASSWORD},
+    )
+    assert login.status_code == 200, login.text
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    db = SessionLocal()
+    produk = None
+    try:
+        user = db.query(User).filter(User.username == BOS_USERNAME).one()
+        produk = (
+            db.query(Product)
+            .filter(Product.store_id == user.store_id, Product.name.like("pytest-dmg-%"))
+            .first()
+        )
+        if produk is None:
+            produk = Product(
+                store_id=user.store_id,
+                name=f"pytest-dmg-{uuid.uuid4().hex[:8]}",
+                unit="kg",
+                modal_price=1000,
+                selling_price=1500,
+                stock=5,
+                min_stock=1,
+            )
+            db.add(produk)
+            db.flush()
+        db.add(
+            DamageReport(
+                store_id=user.store_id,
+                product_id=produk.id,
+                quantity=1,
+                unit=produk.unit,
+                qty_in_base_unit=1,
+                reason="BARU",
+                description="pytest laporan baru",
+                status="PENDING",
+                employee_id=user.id,
+                updated_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
+
+        since = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        r = bos_client.post(
+            "/api/v1/sync/pull",
+            json={"device_id": None, "last_sync_at": since},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        assert any(
+            d.get("description") == "pytest laporan baru"
+            for d in r.json()["damage_reports"]
+        ), "laporan baru tidak terkirim di delta pull"
+    finally:
+        db.query(DamageReport).filter(
+            DamageReport.description == "pytest laporan baru"
+        ).delete(synchronize_session=False)
+        db.flush()
+        if produk is not None and produk.name.startswith("pytest-dmg-"):
+            db.query(StockMovement).filter(
+                StockMovement.product_id == produk.id
+            ).delete(synchronize_session=False)
+            db.delete(produk)
+        db.commit()
+        db.close()
+
+
+def test_created_at_perangkat_disimpan_sebagai_utc(bos_client):
+    """Transaksi dari POS harus tersimpan UTC, bukan jam lokal perangkat.
+
+    POS mengirim `created_at` ber-timezone (`...Z`). Kalau penanda zonanya
+    dibuang tanpa konversi, jam aslinya bergeser 7 jam (WIB) dan Owner Console
+    menampilkannya di tanggal berikutnya -- persis yang terjadi pada transaksi
+    yang dibuat saat offline.
+    """
+    from app.routes.sync import _as_stored_utc
+
+    # 23:45 WIB = 16:45 UTC. Harus disimpan 16:45, bukan 23:45.
+    wib = datetime(2026, 9, 30, 23, 45, 6, tzinfo=timezone(timedelta(hours=7)))
+    assert _as_stored_utc(wib.isoformat()) == datetime(2026, 9, 30, 16, 45, 6)
+    assert _as_stored_utc(wib.isoformat()).tzinfo is None
+
+    # Sudah UTC pun tidak boleh digeser.
+    utc = datetime(2026, 9, 30, 16, 45, 6, tzinfo=timezone.utc)
+    assert _as_stored_utc(utc.isoformat()) == datetime(2026, 9, 30, 16, 45, 6)
+
+    # Tanpa created_at: pakai jam server, bukan error.
+    sebelum = datetime.utcnow()
+    diisi = _as_stored_utc(None)
+    assert diisi is not None
+    assert (diisi - sebelum).total_seconds() < 5
+
+    # Integrasi: sale hasil push tidak boleh berjam lokal.
+    _local_db_only()
+    login = bos_client.post(
+        "/api/v1/auth/login",
+        json={"username": BOS_USERNAME, "password": BOS_PASSWORD},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    nomor = f"TZ-{uuid.uuid4().hex[:8]}"
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == BOS_USERNAME).one()
+        produk = (
+            db.query(Product)
+            .filter(Product.store_id == user.store_id, Product.name.like("pytest-tz-%"))
+            .first()
+        )
+        if produk is None:
+            produk = Product(
+                store_id=user.store_id,
+                name=f"pytest-tz-{uuid.uuid4().hex[:8]}",
+                unit="kg",
+                modal_price=1000,
+                selling_price=1500,
+                stock=5,
+                min_stock=1,
+            )
+            db.add(produk)
+            db.commit()
+        # Sisa run yang gagal pernah menguras stok produk uji, jadi pastikan
+        # cukup dulu supaya tes tidak gagal karena bukan karena timezone.
+        produk.stock = 1000
+        db.commit()
+        r = bos_client.post(
+            "/api/v1/sync/push",
+            json={
+                "device_id": None,
+                "items": [
+                    {
+                        "entity_type": "sale",
+                        "entity_id": str(uuid.uuid4()),
+                        "data": {
+                            "id": str(uuid.uuid4()),
+                            "transaction_number": nomor,
+                            "employee_id": str(user.id),
+                            "total_amount": 1500,
+                            "total_modal": 1000,
+                            "total_profit": 500,
+                            "discount": 0,
+                            "status": "COMPLETED",
+                            # 23:45 WIB
+                            "created_at": "2026-09-30T23:45:06+07:00",
+                            "items": [
+                                {
+                                    "product_id": str(produk.id),
+                                    "product_name": produk.name,
+                                    "unit": "kg",
+                                    "quantity": 1.5,
+                                    "unit_price": 1000,
+                                    "modal_price": 1000,
+                                    "subtotal": 1500,
+                                }
+                            ],
+                            "payment": {"method": "CASH", "amount": 1500},
+                        },
+                    }
+                ],
+            },
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("accepted") == 1, f"push ditolak: {r.text}"
+        row = (
+            db.query(Sale)
+            .filter(Sale.transaction_number == nomor)
+            .one_or_none()
+        )
+        assert row is not None, f"transaksi {nomor} tidak tersimpan"
+        assert row.created_at == datetime(2026, 9, 30, 16, 45, 6), (
+            f"created_at tersimpan {row.created_at}, harusnya 16:45:06 UTC "
+            "(23:45 WIB dikonversi), bukan 23:45 apa adanya"
+        )
+    finally:
+        _id_sale = db.query(Sale.id).filter(Sale.transaction_number == nomor)
+        db.query(Payment).filter(Payment.sale_id.in_(_id_sale)).delete(
+            synchronize_session=False
+        )
+        db.query(SaleItem).filter(SaleItem.sale_id.in_(_id_sale)).delete(
+            synchronize_session=False
+        )
+        db.query(Sale).filter(Sale.transaction_number == nomor).delete(
+            synchronize_session=False
+        )
+        db.flush()
+        if produk is not None and produk.name.startswith("pytest-tz-"):
+            # Hapus SEMUA sale_items produk ini dulu, bukan hanya yang milik
+            # transaksi tes. Kalau ada sisa dari run sebelumnya, db.delete()
+            # produk akan menulis NULL ke product_id (NOT NULL) dan gagal.
+            db.query(SaleItem).filter(
+                SaleItem.product_id == produk.id
+            ).delete(synchronize_session=False)
+            db.query(StockMovement).filter(
+                StockMovement.product_id == produk.id
+            ).delete(synchronize_session=False)
+            db.delete(produk)
+        db.commit()
+        db.close()
 
 
 def test_sync_pull_sales_complete_bendera(bos_client):

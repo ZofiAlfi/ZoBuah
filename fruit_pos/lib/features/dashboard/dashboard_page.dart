@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../../api/api_exception.dart';
 import '../../api/api_service.dart';
 import '../../auth/auth_state.dart';
 import '../../core/formatters.dart';
@@ -47,6 +48,15 @@ class _DashboardPageState extends State<DashboardPage> {
         _data = await api.fetchDashboard();
       } else {
         await _loadProductsFromLocal(db);
+      }
+    } on ApiException catch (e) {
+      await _loadProductsFromLocal(db);
+      // Sesi habis bukan masalah koneksi. Menandainya sebagai offline membuat
+      // user mengira server yang salah, padahal dia perlu login ulang.
+      if (e.statusCode == 401 || e.statusCode == 403) {
+        _error = 'Sesi Anda telah berakhir. Silakan login kembali.';
+      } else {
+        _isOffline = true;
       }
     } catch (e) {
       await _loadProductsFromLocal(db);

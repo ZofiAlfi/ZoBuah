@@ -8,7 +8,9 @@ enum AuthStatus { unknown, unauthenticated, authenticated }
 class AuthState extends ChangeNotifier {
   final AuthRepository repository;
 
-  AuthState({required this.repository});
+  AuthState({required this.repository}) {
+    repository.apiClient.onSessionExpired = _handleSessionExpired;
+  }
 
   AuthStatus _status = AuthStatus.unknown;
   User? _user;
@@ -19,12 +21,41 @@ class AuthState extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       _user = await repository.loadSession();
-      _status = _user != null ? AuthStatus.authenticated : AuthStatus.unauthenticated;
+      if (_user == null) {
+        _status = AuthStatus.unauthenticated;
+        notifyListeners();
+        return;
+      }
+      // Token yang tersimpan bisa saja sudah mati (app lama tidak dibuka,
+      // atau backend sempat diganti). Tanpa verifikasi di sini, user terjebak
+      // di dashboard yang menampilkan "Data tidak tersedia" padahal
+      // masalahnya sesi. Refresh yang ditolak berarti wajib login ulang;
+      // device offline tetap dibiarkan masuk dan pakai cache lokal.
+      final verdict = await repository.refreshSession();
+      if (verdict == false) {
+        debugPrint('Sesi tidak valid, memaksa login ulang');
+        await repository.clearTokens();
+        _user = null;
+        _status = AuthStatus.unauthenticated;
+      } else {
+        _status = AuthStatus.authenticated;
+      }
     } catch (e) {
       _status = AuthStatus.unauthenticated;
       _user = null;
       debugPrint('Auth init error: $e');
     }
+    notifyListeners();
+  }
+
+  /// Dipanggil ApiClient saat refresh token juga ditolak server. Sesi sudah
+  /// tidak bisa dipulihkan, jadi langsung arahkan user ke halaman login.
+  void _handleSessionExpired() {
+    if (_status != AuthStatus.authenticated) return;
+    debugPrint('Sesi kedaluwarsa saat dipakai, memaksa login ulang');
+    _status = AuthStatus.unauthenticated;
+    _user = null;
+    repository.clearTokens();
     notifyListeners();
   }
 

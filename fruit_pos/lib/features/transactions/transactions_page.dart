@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
@@ -7,6 +8,7 @@ import '../../models/sale.dart';
 import '../../shared/widgets/common_widgets.dart';
 import '../../shared/widgets/payment_proof.dart';
 import '../../shared/widgets/photo_view_dialog.dart';
+import '../../sync/sync_manager.dart';
 
 class TransactionsPage extends StatefulWidget {
   const TransactionsPage({super.key});
@@ -22,6 +24,8 @@ class _TransactionsPageState extends State<TransactionsPage> {
   String _search = '';
   String _period = 'all'; // 'all' | 'today' | '7d' | '30d'
 
+  ValueNotifier<int>? _revision;
+
   static const List<({String value, String label})> _periodFilters = [
     (value: 'all', label: 'Semua'),
     (value: 'today', label: 'Hari Ini'),
@@ -33,10 +37,22 @@ class _TransactionsPageState extends State<TransactionsPage> {
   void initState() {
     super.initState();
     _load();
+    // Halaman ini hanya memuat di initState sebelumnya, jadi transaksi yang
+    // baru masuk lewat sync tidak pernah tampil sampai pengguna menutup dan
+    // membuka tab lagi. Ikuti dataRevision supaya daftar ikut terisi sendiri.
+    final revision = context.read<SyncManager>().dataRevision;
+    _revision = revision;
+    revision.addListener(_onDataChanged);
+  }
+
+  void _onDataChanged() {
+    if (!mounted) return;
+    _load();
   }
 
   @override
   void dispose() {
+    _revision?.removeListener(_onDataChanged);
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -52,17 +68,19 @@ class _TransactionsPageState extends State<TransactionsPage> {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     return _sales.where((s) {
-      final created = DateTime.tryParse(s.createdAt ?? '');
+      final created = _waktuLokal(s.createdAt);
       if (_period == 'today') {
         if (created == null) return false;
         final d = DateTime(created.year, created.month, created.day);
         if (!d.isAtSameMomentAs(today)) return false;
       } else if (_period == '7d') {
-        if (created == null || created.isBefore(today.subtract(const Duration(days: 6)))) {
+        if (created == null ||
+            created.isBefore(today.subtract(const Duration(days: 6)))) {
           return false;
         }
       } else if (_period == '30d') {
-        if (created == null || created.isBefore(today.subtract(const Duration(days: 29)))) {
+        if (created == null ||
+            created.isBefore(today.subtract(const Duration(days: 29)))) {
           return false;
         }
       }
@@ -76,6 +94,19 @@ class _TransactionsPageState extends State<TransactionsPage> {
       ].join(' ').toLowerCase();
       return hay.contains(q);
     }).toList();
+  }
+
+  /// Ubah `created_at` dari server ke waktu lokal.
+  ///
+  /// Server menyimpan waktu dalam UTC, jadi `DateTime.tryParse` lalu langsung
+  /// dipakai membandingkan tanggal dengan `DateTime.now()` (waktu lokal) akan
+  /// mencampur dua zona. Transaksi yang dibuat sore atau malam UTC jatuh ke
+  /// tanggal berbeda di perangkat dan hilang dari filter "Hari Ini".
+  static DateTime? _waktuLokal(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return null;
+    return parsed.toLocal();
   }
 
   @override

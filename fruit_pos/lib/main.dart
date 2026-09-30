@@ -49,23 +49,26 @@ Future<void> main() async {
   final authState = AuthState(repository: authRepository);
 
   final db = AppDatabase.instance;
+  final connectivity = ConnectivityService();
+  await connectivity.initialize();
   final syncManager = SyncManager(
     apiService: apiService,
     outboxDao: db.outbox,
     productsDao: db.products,
     salesDao: db.sales,
     damageDao: db.damage,
+    connectivity: connectivity,
   );
-  final connectivity = ConnectivityService();
-  await connectivity.initialize();
 
   await authState.initialize();
-  // Muat pengumuman owner dari perangkat dulu, baru coba tarik yang baru.
+  // Muat pengumuman owner dari perangkat dulu, tanpa menunggu jaringan.
   // Kalau perangkat offline, pull akan gagal dan tanpa baris ini pengumuman
   // yang tersimpan tidak akan pernah tampil.
   await syncManager.restoreNotices();
-  await syncManager.syncNow();
-  await syncManager.startPeriodicSync();
+  // Sinkronisasi dijalankan di background setelah UI tampil. Sebelumnya
+  // menunggu syncNetwork di sini membuat app "ngestuck loading" sampai puluhan
+  // detik saat server tidak terjangkau (timeout push 20s + pull 15s berurutan).
+  unawaited(syncManager.startPeriodicSync());
 
   runApp(
     FruitPosApp(

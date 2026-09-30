@@ -449,6 +449,10 @@ class SaleEditRequest(BaseModel):
     payment: Optional[SaleEditPayment] = None
 
 
+class SaleDeleteRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
 class SaleItemSnapshot(BaseModel):
     id: UUID
     sale_id: UUID

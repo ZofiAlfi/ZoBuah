@@ -1,5 +1,5 @@
-import 'package:flutter_test/flutter_test.dart';
-import 'package:fruit_pos/features/dashboard/owner_notice_banner.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:fruit_pos/features/dashboard/owner_notice_ticker.dart';
 import 'package:fruit_pos/models/broadcast_notice.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -77,28 +77,28 @@ void main() {
     });
 
     test('id yang ditutup tersimpan dan ikut dibaca kembali', () async {
-      await OwnerNoticeBanner.markDismissed('b1');
-      await OwnerNoticeBanner.markDismissed('b2');
+      await OwnerNoticeTicker.markDismissed('b1');
+      await OwnerNoticeTicker.markDismissed('b2');
 
-      expect(await OwnerNoticeBanner.dismissedIds(), {'b1', 'b2'});
+      expect(await OwnerNoticeTicker.dismissedIds(), {'b1', 'b2'});
     });
 
     test('menutup pengumuman lain tidak menghapus yang lama', () async {
-      await OwnerNoticeBanner.markDismissed('b1');
-      await OwnerNoticeBanner.markDismissed('b2');
+      await OwnerNoticeTicker.markDismissed('b1');
+      await OwnerNoticeTicker.markDismissed('b2');
 
       // Dipanggil lagi setelah app start ulang.
-      expect(await OwnerNoticeBanner.dismissedIds(), {'b1', 'b2'});
+      expect(await OwnerNoticeTicker.dismissedIds(), {'b1', 'b2'});
     });
 
     test('id kosong diabaikan', () async {
-      await OwnerNoticeBanner.markDismissed('');
+      await OwnerNoticeTicker.markDismissed('');
 
-      expect(await OwnerNoticeBanner.dismissedIds(), isEmpty);
+      expect(await OwnerNoticeTicker.dismissedIds(), isEmpty);
     });
 
     test('pref kosong dibaca sebagai daftar kosong', () async {
-      expect(await OwnerNoticeBanner.dismissedIds(), isEmpty);
+      expect(await OwnerNoticeTicker.dismissedIds(), isEmpty);
     });
   });
 }

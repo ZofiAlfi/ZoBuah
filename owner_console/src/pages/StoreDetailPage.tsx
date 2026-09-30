@@ -29,6 +29,7 @@ export function StoreDetailPage() {
   const [impersonating, setImpersonating] = useState<ImpersonateResult | null>(null);
   const [viewingSale, setViewingSale] = useState<AdminSale | null>(null);
   const [editingSale, setEditingSale] = useState<AdminSale | null>(null);
+  const [deletingSale, setDeletingSale] = useState<AdminSale | null>(null);
 
   if (store.loading) return <Loading />;
   if (store.error) return <ErrorBox message={store.error} onRetry={store.reload} />;
@@ -220,6 +221,17 @@ export function StoreDetailPage() {
                             Koreksi
                           </button>
                         ) : null}
+                        {sale.status === "COMPLETED" ? (
+                          <button
+                            className="btn btn-outline-danger btn-sm"
+                            type="button"
+                            onClick={() => setDeletingSale(sale)}
+                            title="Hapus transaksi ini (stok item akan dikembalikan)"
+                          >
+                            <i className="bi bi-trash" aria-hidden />
+                            Hapus
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -320,6 +332,19 @@ export function StoreDetailPage() {
           onClose={() => setEditingSale(null)}
           onDone={() => {
             setEditingSale(null);
+            sales.reload();
+            store.reload();
+          }}
+        />
+      ) : null}
+
+      {deletingSale ? (
+        <DeleteSaleModal
+          storeId={storeId}
+          sale={deletingSale}
+          onClose={() => setDeletingSale(null)}
+          onDone={() => {
+            setDeletingSale(null);
             sales.reload();
             store.reload();
           }}
@@ -736,7 +761,9 @@ function SaleDetailModal({
                     style={{ background: "var(--neo-panel)" }}
                   >
                     <div className="d-flex flex-wrap gap-2 align-items-center">
-                      <Badge tone="warn">Dikoreksi</Badge>
+                      <Badge tone={log.action === "SALE_DELETE" ? "bad" : "warn"}>
+                        {log.action === "SALE_DELETE" ? "Dihapus owner" : "Dikoreksi"}
+                      </Badge>
                       <span className="small">{log.username ?? "Owner"}</span>
                       <span className="small muted">{dateTime(log.created_at)}</span>
                     </div>
@@ -1110,6 +1137,87 @@ function EditSaleModal({
           </div>
         </>
       )}
+    </Modal>
+  );
+}
+
+function DeleteSaleModal({
+  storeId,
+  sale,
+  onClose,
+  onDone,
+}: {
+  storeId: string;
+  sale: AdminSale;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/admin/stores/${storeId}/sales/${sale.id}/delete`, {
+        reason: reason.trim() || null,
+      });
+      toast(`${sale.transaction_number} dihapus. Stok item dikembalikan otomatis.`);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Gagal menghapus transaksi.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Hapus ${sale.transaction_number}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-soft" type="button" onClick={onClose} disabled={busy}>
+            Batal
+          </button>
+          <button
+            className="btn btn-danger"
+            type="button"
+            onClick={submit}
+            disabled={busy || reason.trim().length === 0}
+          >
+            {busy ? "Menghapus..." : "Ya, hapus transaksi"}
+          </button>
+        </>
+      }
+    >
+      {error ? (
+        <div className="alert alert-bad mb-3" role="alert">
+          <i className="bi bi-exclamation-triangle-fill" aria-hidden />
+          <div className="alert-body">
+            <div className="alert-msg">{error}</div>
+          </div>
+        </div>
+      ) : null}
+
+      <Alert tone="bad" title="Ini tindakan permanen">
+        Transaksi {sale.transaction_number} ({sale.employee_name ?? "-"}, {money(sale.total_amount)})
+        akan dibatalkan, <strong>stok semua item dikembalikan</strong>, dan transaksi
+        tidak lagi dihitung dalam omzet/laporan. Riwayat transaksi & jejak audit
+        tetap tersimpan.
+      </Alert>
+
+      <Field label="Alasan penghapusan" hint="Diperlukan supaya ada catatan jelas di riwayat.">
+        <input
+          className="form-control"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={500}
+          placeholder="mis. transaksi salah dimasukkan, duplikat"
+        />
+      </Field>
     </Modal>
   );
 }

@@ -85,6 +85,25 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
+          // Error sinkronisasi harus terlihat. Sebelumnya kegagalan pull hanya
+          // dicatat di debugPrint yang hilang di build release, jadi satu-satunya
+          // gejala yang terlihat adalah "Belum ada transaksi" tanpa penjelasan.
+          ValueListenableBuilder<String?>(
+            valueListenable: sync.lastSyncError,
+            builder: (_, err, __) {
+              if (err == null || err.isEmpty) return const SizedBox.shrink();
+              return Card(
+                color: AppColors.danger.withValues(alpha: 0.10),
+                child: ListTile(
+                  leading: const Icon(Icons.sync_problem, color: AppColors.danger),
+                  title: const Text('Sinkronisasi bermasalah'),
+                  subtitle: Text(err),
+                  trailing: const Icon(Icons.refresh, color: AppColors.danger),
+                  onTap: () => sync.syncNow(forcePull: true),
+                ),
+              );
+            },
+          ),
           ValueListenableBuilder<int>(
             valueListenable: sync.pendingCount,
             builder: (_, count, __) {

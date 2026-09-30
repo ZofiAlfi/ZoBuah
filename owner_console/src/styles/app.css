@@ -641,6 +641,12 @@ textarea.form-control {
 }
 
 .modal {
+  /* Bootstrap menetapkan display:none, position:fixed;top:0;left:0 dan
+   * height:100% utk klas .modal. Kita override semuanya supaya dialog
+   * menjadi item normal overlay grid dan tampil di tengah. */
+  display: block;
+  position: relative;
+  height: auto;
   background: var(--neo-surface);
   border-radius: 20px;
   box-shadow: var(--shadow-raise-lg);
