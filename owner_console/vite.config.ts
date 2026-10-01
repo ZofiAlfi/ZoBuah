@@ -1,8 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Proxy ke backend ZoBuah. Owner Console dan POS menyentuh host yang sama
-// saat dev, jadi CORS tidak jadi urusan browser selama pengembangan.
+// Proxy ke backend ZoBuah di Render. Owner Console tetap dijalankan lokal,
+// hanyaPermintaan API yang dialihkan ke produksi lewat proxy dev Vite.
+// Dengan begitu browser tidak pernah menyentuh host Render secara langsung,
+// sehingga tidak ada CORS yang perlu dikonfigurasi di sisi server.
+//
+// CATATAN: nama service di render.yaml (fruitpos-api) TIDAK sama dengan host
+// yang benar-benar hidup (zobuah). Verifikasi dengan /health sebelum deploy:
+//   https://zobuah.onrender.com/health -> {"status":"ok",...}
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -10,8 +16,8 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: false,
+        target: "https://zobuah.onrender.com",
+        changeOrigin: true,
       },
     },
   },
