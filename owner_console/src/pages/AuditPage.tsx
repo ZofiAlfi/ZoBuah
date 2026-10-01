@@ -20,6 +20,7 @@ const ACTION_TONE: Record<string, string> = {
   IMPERSONATE: "warn",
   BROADCAST_CREATE: "info",
   BROADCAST_DEACTIVATE: "muted",
+  BROADCAST_DELETE: "bad",
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -28,6 +29,7 @@ const ACTION_LABEL: Record<string, string> = {
   IMPERSONATE: "Tinjau toko",
   BROADCAST_CREATE: "Buat broadcast",
   BROADCAST_DEACTIVATE: "Nonaktifkan broadcast",
+  BROADCAST_DELETE: "Hapus broadcast",
   LOGIN_FAILED: "Gagal login",
 };
 

@@ -800,6 +800,49 @@ def delete_broadcast(
     return {"ok": True, "id": str(broadcast.id)}
 
 
+@router.delete("/broadcasts/{broadcast_id}/purge")
+def purge_broadcast(
+    broadcast_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    """Hapus permanen broadcast yang sudah dinonaktifkan.
+
+    Menonaktifkan (`DELETE /broadcasts/{id}`) hanya menyembunyikan banner dari
+    perangkat, tapi barisnya tetap menetap selamanya di daftar owner, jadi
+    daftar itu lama-lama jadi penuh sisa pengumuman yang sudah tidak berlaku.
+    Endpoint ini membersihkan sisanya.
+
+    Broadcast yang masih aktif DITOLAK dihapus. Kalau baris hilang sementara
+    perangkat sedang offline, banner yang sudah tayang hilang dari daftar tanpa
+    ada jejak kapan dicabut, dan owner bisa mengira broadcast-nya tidak pernah
+    terkirim. Menonaktifkan dulu, lalu hapus, jadi dua langkah itu selalu
+    terlihat di audit log.
+    """
+    broadcast = db.query(Broadcast).filter(Broadcast.id == broadcast_id).first()
+    if broadcast is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Broadcast tidak ditemukan")
+    if broadcast.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nonaktifkan dulu broadcast ini sebelum dihapus permanen.",
+        )
+    snapshot = {"title": broadcast.title, "store_id": broadcast.store_id}
+    db.delete(broadcast)
+    db.commit()
+    log_audit(
+        db,
+        owner,
+        "BROADCAST_DELETE",
+        "broadcast",
+        broadcast_id,
+        snapshot,
+        request,
+    )
+    return {"ok": True, "id": str(broadcast_id)}
+
+
 # --------------------------------------------------------------------------
 # Audit
 # --------------------------------------------------------------------------

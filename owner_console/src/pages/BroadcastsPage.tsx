@@ -106,7 +106,28 @@ export function BroadcastsPage() {
             const expired = b.expires_at !== null && new Date(b.expires_at).getTime() <= now;
             const live = b.is_active && started && !expired;
 
-            return (
+async function purge(id: string, title: string) {
+    if (
+      !window.confirm(
+        `Hapus permanen broadcast "${title}"?\n\n` +
+          `Riwayatnya dihapus dari daftar dan tidak bisa dikembalikan. ` +
+          `Kalau ternyata masih perlu, buat ulang broadcast baru.`,
+      )
+    )
+      return;
+    setBusyId(id);
+    try {
+      await api.del(`/admin/broadcasts/${id}/purge`);
+      toast(`Broadcast "${title}" dihapus permanen.`);
+      list.reload();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Gagal menghapus broadcast.", "bad");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
               <div className="col-12 col-xl-6" key={b.id}>
                 <div className="neo-card neo-card-hover h-100">
                   <div className="card-head">
@@ -132,7 +153,22 @@ export function BroadcastsPage() {
                       >
                         Nonaktifkan
                       </button>
-                    ) : null}
+                    ) : (
+                      // Hapus permanen hanya boleh untuk broadcast yang sudah
+                      // dinonaktifkan. Backend juga menolak kalau masih aktif,
+                      // jadi tombolnya disembunyikan saja supaya tidak ada
+                      // jalan buntu yang gagal di server.
+                      <button
+                        className="btn btn-outline-danger btn-sm"
+                        type="button"
+                        disabled={busyId === b.id}
+                        onClick={() => purge(b.id, b.title)}
+                        title="Hapus permanen dari daftar"
+                      >
+                        <i className="bi bi-trash" aria-hidden />
+                        Hapus
+                      </button>
+                    )}
                   </div>
 
                   <h3 className="d-flex align-items-center gap-2">
