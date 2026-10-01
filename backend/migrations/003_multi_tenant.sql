@@ -55,6 +55,39 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 CREATE INDEX IF NOT EXISTS ix_broadcasts_active ON broadcasts (is_active, starts_at DESC);
 
 -- ---------------------------------------------------------------------------
+-- 2b. Policy RLS untuk dua tabel baru
+--
+-- WAJIB. Tanpa blok ini, stores dan broadcasts tetap TERKUNCI untuk role
+-- aplikasi di database yang RLS-nya sudah menyala: RLS tanpa policy berarti
+-- default deny, sehingga baris LEGACY-01 di bawah tidak pernah tercipta dan
+-- tabel stores selalu kosong.
+--
+-- Policy di sini sengaja longgar (USING true). RLS pada proyek ini hanya
+-- menjadi pintu masuk bagi role aplikasi; isolasi tenant ditegakkan di kode
+-- lewat filter store_id (backend/app/tenancy.py). Menyamakan stores dan
+-- broadcasts dengan 13 tabel lain tidak membuka celah baru.
+--
+-- Guard EXISTS dipakai karena pada database lokal role zobuah_app belum ada;
+-- di sana backend biasanya konek sebagai pemilik tabel sehingga policy
+-- tidak diperlukan.
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'zobuah_app') THEN
+        EXECUTE 'ALTER TABLE stores     ENABLE ROW LEVEL SECURITY';
+        EXECUTE 'ALTER TABLE broadcasts ENABLE ROW LEVEL SECURITY';
+
+        EXECUTE 'DROP POLICY IF EXISTS app_all ON stores';
+        EXECUTE 'CREATE POLICY app_all ON stores '
+             || 'FOR ALL TO zobuah_app USING (true) WITH CHECK (true)';
+
+        EXECUTE 'DROP POLICY IF EXISTS app_all ON broadcasts';
+        EXECUTE 'CREATE POLICY app_all ON broadcasts '
+             || 'FOR ALL TO zobuah_app USING (true) WITH CHECK (true)';
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- 3. Backfill: satu store untuk seluruh data yang sudah ada
 --    Dev bersih, tapi script tetap aman kalau dijalankan di DB berisi data.
 -- ---------------------------------------------------------------------------

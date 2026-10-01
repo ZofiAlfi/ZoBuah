@@ -26,6 +26,9 @@ q.xml
 # Render
 render.env
 
+# Backup data produksi (dump berisi data pelanggan, NEVER commit)
+backups/
+
 # IDE
 .idea/
 .vscode/
