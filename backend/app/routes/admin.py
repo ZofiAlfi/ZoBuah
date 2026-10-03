@@ -1119,15 +1119,28 @@ def store_products(
 def store_sales(
     store_id: UUID,
     trx_status: Optional[str] = Query(None, max_length=20),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    q: Optional[str] = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
     owner: User = Depends(require_owner()),
 ):
+    """Daftar transaksi toko.
+
+    Pencarian dan rentang tanggal ditambahkan supaya seragam dengan tab lain
+    di Data Browser. Tanpa keduanya, memverifikasi satu transaksi berarti
+    membuka seluruh halaman satu per satu -- dan karena urutannya berdasarkan
+    waktu, transaksi yang dicari bisa berada di halaman mana saja.
+    """
     get_store_or_404(db, store_id)
     query = db.query(Sale).filter(Sale.store_id == store_id)
     if trx_status in ("COMPLETED", "CANCELED"):
         query = query.filter(Sale.status == trx_status)
+    query = _apply_created_range(query, Sale.created_at, date_from, date_to)
+    if q:
+        query = query.filter(Sale.transaction_number.ilike(f"%{q}%"))
     total = query.count()
     rows = (
         query.options(joinedload(Sale.employee), joinedload(Sale.sale_items))

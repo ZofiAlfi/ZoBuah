@@ -245,6 +245,19 @@ class TestDateRangeFilter:
         assert "2025" not in dry.sql
 
 
+class TestExistingEndpointsStillIsolated:
+    """products dan sales sudah ada dari sebelumnya; perbaikannya tidak boleh
+    mengurangi aislamiento toko."""
+
+    def test_sales_dibatasi_toko(self, dry):
+        call(admin_routes.store_sales, dry, store_id=STORE_ID)
+        assert "sales.store_id" in dry.sql
+
+    def test_products_dibatasi_toko(self, dry):
+        call(admin_routes.store_products, dry, store_id=STORE_ID)
+        assert "products.store_id" in dry.sql
+
+
 class TestStoreGuardRunsFirst:
     @pytest.mark.parametrize("endpoint", sorted(ENDPOINTS))
     def test_toko_tidak_ada_menghasilkan_404(self, monkeypatch, endpoint):
