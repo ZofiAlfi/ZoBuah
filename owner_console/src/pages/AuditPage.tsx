@@ -21,6 +21,8 @@ const ACTION_TONE: Record<string, string> = {
   BROADCAST_CREATE: "info",
   BROADCAST_DEACTIVATE: "muted",
   BROADCAST_DELETE: "bad",
+  DAMAGE_REPORT_APPROVE_ADMIN: "ok",
+  DAMAGE_REPORT_REJECT_ADMIN: "bad",
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -31,6 +33,8 @@ const ACTION_LABEL: Record<string, string> = {
   BROADCAST_DEACTIVATE: "Nonaktifkan broadcast",
   BROADCAST_DELETE: "Hapus broadcast",
   LOGIN_FAILED: "Gagal login",
+  DAMAGE_REPORT_APPROVE_ADMIN: "Setujui barang rusak (owner)",
+  DAMAGE_REPORT_REJECT_ADMIN: "Tolak barang rusak (owner)",
 };
 
 export function AuditPage() {
@@ -69,6 +73,8 @@ export function AuditPage() {
             <option value="FORCE_LOGOUT">Paksa keluar</option>
             <option value="RESET_PASSWORD">Atur ulang sandi</option>
             <option value="IMPERSONATE">Tinjau toko</option>
+            <option value="DAMAGE_REPORT_APPROVE_ADMIN">Setujui barang rusak (owner)</option>
+            <option value="DAMAGE_REPORT_REJECT_ADMIN">Tolak barang rusak (owner)</option>
           </select>
         </div>
       </div>

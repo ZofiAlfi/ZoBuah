@@ -538,6 +538,132 @@ textarea.form-control {
   font-size: 13px;
 }
 
+/* ===================== DATA BROWSER ===================== */
+/* Tab data toko. Scroll horizontal, bukan wrap, supaya delapan tab tetap
+ * muat dalam satu baris di layar laptop dan tidak=inline memecah layout. */
+.tab-bar {
+  display: flex;
+  gap: var(--sp-1);
+  overflow-x: auto;
+  padding: var(--sp-2);
+  background: var(--neo-surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-raise);
+  scrollbar-width: thin;
+}
+
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--neo-muted);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.tab-btn:hover {
+  color: var(--neo-text);
+  background: var(--soft-acc);
+}
+
+.tab-btn.is-active {
+  background: var(--neo-acc);
+  color: #fff;
+}
+
+.tab-btn .rail-count {
+  margin-left: 2px;
+}
+
+.summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.summary-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  min-width: 128px;
+  background: var(--neo-inset);
+  border-radius: var(--r-pill);
+}
+
+.summary-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--neo-muted);
+}
+
+.summary-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-value.tone-ok {
+  color: var(--neo-ok);
+}
+.summary-value.tone-warn {
+  color: var(--neo-warn);
+}
+.summary-value.tone-bad {
+  color: var(--neo-bad);
+}
+
+.data-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.th-sort:hover {
+  color: var(--neo-acc);
+}
+
+.th-sort:focus-visible {
+  outline: 2px solid var(--neo-acc);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+tr.row-clickable {
+  cursor: pointer;
+}
+
+/* Kepala laporan hanya muncul di kertas, bukan di layar. */
+.print-head {
+  display: none;
+}
+
 /* ===================== BADGE ===================== */
 .badge {
   display: inline-flex;
@@ -985,6 +1111,14 @@ textarea.form-control {
   .content {
     padding: var(--sp-3);
   }
+  .pager {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-2);
+  }
+  .pager > div {
+    justify-content: space-between;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -993,5 +1127,96 @@ textarea.form-control {
   *::after {
     transition: none !important;
     animation: none !important;
+  }
+}
+
+/* ===================== CETAK ===================== */
+/* Ekspor PDF memakai dialog cetak browser. Yang dicetak hanya tabel yang
+ * sedang aktif: kerangka aplikasi disembunyikan supaya kertas tidak
+ * terpakai untuk sidebar dan topbar. */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  body.is-printing .shell {
+    display: block !important;
+  }
+
+  body.is-printing .rail,
+  body.is-printing .topbar,
+  body.is-printing .banner,
+  body.is-printing .toast-container,
+  body.is-printing .no-print,
+  body.is-printing .pager,
+  body.is-printing .tab-bar {
+    display: none !important;
+  }
+
+  body.is-printing .content {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  body.is-printing .content::before {
+    display: none !important;
+  }
+
+  body.is-printing .neo-card,
+  body.is-printing .neo-panel,
+  body.is-printing .kpi {
+    box-shadow: none !important;
+    border: 1px solid #d7d9dd !important;
+    break-inside: avoid;
+  }
+
+  body.is-printing .print-head {
+    display: block !important;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #222;
+  }
+
+  .print-head-title {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .print-head-sub {
+    font-size: 11px;
+  }
+
+  .print-head-meta {
+    font-size: 10px;
+    color: #555;
+  }
+
+  body.is-printing .summary-bar {
+    break-inside: avoid;
+  }
+
+  body.is-printing .table {
+    font-size: 10px;
+  }
+
+  body.is-printing .table thead {
+    display: table-header-group;
+  }
+
+  body.is-printing .table tr {
+    break-inside: avoid;
+  }
+
+  body.is-printing .table-responsive {
+    overflow: visible !important;
+  }
+
+  body.is-printing a[href]::after {
+    content: "";
   }
 }

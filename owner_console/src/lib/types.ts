@@ -255,3 +255,108 @@ export type DashboardPayload = {
 };
 
 export type Paged<T> = { items: T[]; meta: PageMeta };
+
+/* ------------------------------------------------------------------ */
+/* Data Browser per toko                                              */
+/* ------------------------------------------------------------------ */
+
+export type DamageStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export type DamageReport = {
+  id: string;
+  store_id: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  quantity: number;
+  unit: string;
+  qty_in_base_unit: number | null;
+  reason: string;
+  description: string | null;
+  status: DamageStatus;
+  employee_id: string | null;
+  employee_name: string | null;
+  approved_by_name: string | null;
+  approved_at: string | null;
+  rejected_by_name: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  photos: string[];
+  created_at: string | null;
+};
+
+export type DamageSummary = {
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+};
+
+export type StockMovement = {
+  id: string;
+  product_id: string | null;
+  product_name: string | null;
+  movement_type: string;
+  quantity: number;
+  stock_before: number;
+  stock_after: number;
+  reference_type: string | null;
+  notes: string | null;
+  user_name: string | null;
+  created_at: string | null;
+};
+
+export type StockSummary = {
+  total_movements: number;
+  in: number;
+  out: number;
+  sale: number;
+  opening: number;
+  adjustment: number;
+  damage: number;
+};
+
+export type Payment = {
+  id: string;
+  sale_id: string | null;
+  transaction_number: string | null;
+  method: "CASH" | "TRANSFER" | "QRIS";
+  amount: number;
+  cash_received: number | null;
+  change_amount: number | null;
+  reference: string | null;
+  file_url: string | null;
+  employee_name: string | null;
+  sale_status: "COMPLETED" | "CANCELED" | null;
+  created_at: string | null;
+};
+
+export type PaymentSummary = {
+  total_amount: number;
+  total_payments: number;
+  by_method: Record<string, number>;
+};
+
+export type ProductHistoryEntry = {
+  id: string;
+  action: string;
+  product_id: string | null;
+  product_name: string | null;
+  details: Record<string, unknown> | null;
+  user_name: string | null;
+  ip_address: string | null;
+  created_at: string | null;
+};
+
+export type StoreCategory = {
+  id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  product_count: number;
+  created_at: string | null;
+};
+
+/* Tiga endpoint terakhir memakai Paged polos; tiga pertama menambah
+ * summary. Bentuk summary berbeda per tab, jadi field-nya dibiarkan
+ * generik supaya satu DataTable bisa dipakai untuk semuanya. */
+export type PagedWithSummary<T, S> = { items: T[]; meta: PageMeta; summary: S };

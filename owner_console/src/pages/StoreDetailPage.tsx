@@ -2,12 +2,19 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useToast } from "../components/AppShell";
-import { Alert, Badge, Empty, ErrorBox, Field, Kpi, Loading, Modal } from "../components/ui";
-import { CountUp } from "../components/countup";
+import { Alert, Badge, ErrorBox, Field, Loading, Modal } from "../components/ui";
 import { api } from "../lib/api";
-import { dateInputToIsoDate, dateShort, dateTime, healthLabel, money, num, planLabel, relative, roleLabel, statusLabel } from "../lib/format";
+import { dateInputToIsoDate, dateShort, dateTime, healthLabel, money, num, planLabel, relative, statusLabel } from "../lib/format";
 import { useFetch } from "../lib/useFetch";
-import type { AdminSale, AdminSaleDetail, AdminUser, ImpersonateResult, Paged, Plan, StoreDetail, StoreProductLite } from "../lib/types";
+import type { AdminSale, AdminSaleDetail, ImpersonateResult, Paged, Plan, StoreDetail, StoreProductLite } from "../lib/types";
+import { DamageTab } from "./store/DamageTab";
+import { HistoryTab } from "./store/HistoryTab";
+import { PaymentsTab } from "./store/PaymentsTab";
+import { PeopleTab } from "./store/PeopleTab";
+import { ProductsTab } from "./store/ProductsTab";
+import { SalesTab } from "./store/SalesTab";
+import { StockTab } from "./store/StockTab";
+import { SummaryTab } from "./store/SummaryTab";
 
 const PLAN_TONE: Record<Plan, string> = {
   PRO: "ok",
@@ -16,20 +23,31 @@ const PLAN_TONE: Record<Plan, string> = {
   UNLIMITED: "ok",
 };
 
+const TABS = [
+  { key: "summary", label: "Ringkasan", icon: "bi-grid-1x2" },
+  { key: "damage", label: "Barang Rusak", icon: "bi-exclamation-triangle" },
+  { key: "stock", label: "Pergerakan Stok", icon: "bi-arrow-left-right" },
+  { key: "history", label: "Riwayat Produk", icon: "bi-clock-history" },
+  { key: "products", label: "Produk", icon: "bi-box-seam" },
+  { key: "sales", label: "Penjualan", icon: "bi-receipt" },
+  { key: "payments", label: "Pembayaran", icon: "bi-credit-card" },
+  { key: "people", label: "Kategori & Pengguna", icon: "bi-people" },
+] as const;
+
 export function StoreDetailPage() {
   const { storeId = "" } = useParams();
   const toast = useToast();
 
   const store = useFetch<StoreDetail>(`/admin/stores/${storeId}`);
-  const users = useFetch<{ items: AdminUser[] }>(`/admin/stores/${storeId}/users`);
-  const sales = useFetch<Paged<AdminSale>>(`/admin/stores/${storeId}/sales`);
 
+  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("summary");
   const [editing, setEditing] = useState(false);
   const [addingUser, setAddingUser] = useState(false);
   const [impersonating, setImpersonating] = useState<ImpersonateResult | null>(null);
   const [viewingSale, setViewingSale] = useState<AdminSale | null>(null);
   const [editingSale, setEditingSale] = useState<AdminSale | null>(null);
   const [deletingSale, setDeletingSale] = useState<AdminSale | null>(null);
+  const [salesToken, setSalesToken] = useState(0);
 
   if (store.loading) return <Loading />;
   if (store.error) return <ErrorBox message={store.error} onRetry={store.reload} />;
@@ -38,6 +56,7 @@ export function StoreDetailPage() {
   const s = store.data;
   const h = healthLabel(s.health);
   const st = statusLabel(s.status);
+  const storeLabel = `${s.name} (${s.code})`;
 
   return (
     <>
@@ -87,6 +106,9 @@ export function StoreDetailPage() {
               <Badge tone={PLAN_TONE[s.plan]}>{planLabel(s.plan)}</Badge>
               <Badge tone={st.tone}>{st.text}</Badge>
               <Badge tone={h.tone}>{h.text}</Badge>
+              {s.pending_damage_count > 0 ? (
+                <Badge tone="warn">{num(s.pending_damage_count)} laporan rusak menunggu</Badge>
+              ) : null}
               <span className="small muted">Sinkron {relative(s.last_sync_at)}</span>
             </div>
           </div>
@@ -101,196 +123,47 @@ export function StoreDetailPage() {
         </div>
       </div>
 
-      {s.status !== "ACTIVE" ? (
-        <Alert tone="bad" title="Toko ini sedang tidak aktif">
-          Karyawan tidak bisa masuk POS di toko ini sampai statusnya dikembalikan ke Aktif.
-        </Alert>
-      ) : null}
-
-      <div className="row g-3">
-        <div className="col-12 col-sm-6 col-xl-4 col-xxl-2">
-          <Kpi
-            icon="bi-cash-stack"
-            label="Omzet 30 hari"
-            value={<CountUp value={s.revenue_30d} format={money} />}
-            sub={<><CountUp value={s.sale_count_30d} format={num} /> transaksi</>}
-          />
-        </div>
-        <div className="col-12 col-sm-6 col-xl-4 col-xxl-2">
-          <Kpi
-            icon="bi-wallet2"
-            label="Omzet total"
-            value={<CountUp value={s.lifetime_revenue} format={money} />}
-            sub={<><CountUp value={s.total_sales} format={num} /> transaksi</>}
-          />
-        </div>
-        <div className="col-12 col-sm-6 col-xl-4 col-xxl-2">
-          <Kpi
-            icon="bi-people"
-            label="Pengguna"
-            value={<CountUp value={s.user_count} format={num} />}
-            sub={`${num(users.data?.items.length ?? 0)} dimuat`}
-          />
-        </div>
-        <div className="col-12 col-sm-6 col-xl-4 col-xxl-2">
-          <Kpi
-            icon="bi-box-seam"
-            label="Produk"
-            value={<CountUp value={s.product_count} format={num} />}
-            sub={`${num(s.category_count)} kategori`}
-          />
-        </div>
-        <div className="col-12 col-sm-6 col-xl-4 col-xxl-2">
-          <Kpi
-            icon="bi-phone"
-            label="Perangkat"
-            value={<CountUp value={s.device_count} format={num} />}
-            sub={`${num(s.failed_sync_count_7d)} sync gagal 7h`}
-          />
-        </div>
-        <div className="col-12 col-sm-6 col-xl-4 col-xxl-2">
-          <Kpi
-            icon="bi-exclamation-triangle"
-            label="Stok menipis"
-            value={<CountUp value={s.low_stock_count} format={num} />}
-            sub={`${num(s.pending_damage_count)} laporan rusak pending`}
-            tone={s.low_stock_count > 0 ? "warn" : "ok"}
-          />
-        </div>
-      </div>
-
-      <div className="neo-card">
-        <div className="card-head">
-          <h2>Transaksi toko ini</h2>
-          <div className="spacer" />
-          <span className="small muted">{num(sales.data?.meta.total ?? 0)} total</span>
-        </div>
-
-        {sales.loading ? (
-          <Loading label="Memuat transaksi" pattern="lines" />
-        ) : sales.error ? (
-          <ErrorBox message={sales.error} onRetry={sales.reload} />
-        ) : (sales.data?.items.length ?? 0) === 0 ? (
-          <Empty>Belum ada transaksi tercatat di toko ini.</Empty>
-        ) : (
-          <div className="table-responsive">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Nomor</th>
-                  <th>Waktu</th>
-                  <th>Kasir</th>
-                  <th className="text-end">Item</th>
-                  <th className="text-end">Total</th>
-                  <th>Status</th>
-                  <th aria-label="Aksi" />
-                </tr>
-              </thead>
-              <tbody>
-                {sales.data!.items.map((sale) => (
-                  <tr key={sale.id}>
-                    <td className="mono">{sale.transaction_number}</td>
-                    <td className="small muted">{dateTime(sale.created_at)}</td>
-                    <td>{sale.employee_name ?? "-"}</td>
-                    <td className="text-end">{num(sale.item_count)}</td>
-                    <td className="text-end">{money(sale.total_amount)}</td>
-                    <td>
-                      <Badge tone={sale.status === "COMPLETED" ? "ok" : "muted"}>
-                        {sale.status === "COMPLETED" ? "Selesai" : "Batal"}
-                      </Badge>
-                    </td>
-                    <td>
-                      <div className="d-flex gap-1 justify-content-end">
-                        <button
-                          className="btn btn-soft btn-sm"
-                          type="button"
-                          onClick={() => setViewingSale(sale)}
-                          title="Lihat detail transaksi"
-                        >
-                          <i className="bi bi-eye" aria-hidden />
-                          <span className="visually-hidden">Detail {sale.transaction_number}</span>
-                        </button>
-                        {sale.status === "COMPLETED" ? (
-                          <button
-                            className="btn btn-outline-primary btn-sm"
-                            type="button"
-                            onClick={() => setEditingSale(sale)}
-                            title="Koreksi transaksi ini kalau ada data yang salah"
-                          >
-                            <i className="bi bi-pencil-square" aria-hidden />
-                            Koreksi
-                          </button>
-                        ) : null}
-                        {sale.status === "COMPLETED" ? (
-                          <button
-                            className="btn btn-outline-danger btn-sm"
-                            type="button"
-                            onClick={() => setDeletingSale(sale)}
-                            title="Hapus transaksi ini (stok item akan dikembalikan)"
-                          >
-                            <i className="bi bi-trash" aria-hidden />
-                            Hapus
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="neo-card">
-        <div className="card-head">
-          <h2>Pengguna toko ini</h2>
-          <div className="spacer" />
-          <button className="btn btn-outline-primary btn-sm" type="button" onClick={() => setAddingUser(true)}>
-            <i className="bi bi-person-plus" aria-hidden />
-            Tambah pengguna
+      <div className="tab-bar no-print" role="tablist" aria-label="Data toko">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            id={`tab-${t.key}`}
+            aria-selected={tab === t.key}
+            aria-controls={`panel-${t.key}`}
+            className={`tab-btn${tab === t.key ? " is-active" : ""}`}
+            onClick={() => setTab(t.key)}
+          >
+            <i className={`bi ${t.icon}`} aria-hidden />
+            {t.label}
+            {t.key === "damage" && s.pending_damage_count > 0 ? (
+              <span className="rail-count">{num(s.pending_damage_count)}</span>
+            ) : null}
           </button>
-          <Link className="small" to="/pengguna">
-            Kelola semua pengguna
-          </Link>
-        </div>
+        ))}
+      </div>
 
-        {users.loading ? (
-          <Loading label="Memuat pengguna" pattern="lines" />
-        ) : users.error ? (
-          <ErrorBox message={users.error} onRetry={users.reload} />
-        ) : (users.data?.items.length ?? 0) === 0 ? (
-          <Empty>Belum ada pengguna di toko ini.</Empty>
-        ) : (
-          <div className="table-responsive">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Nama pengguna</th>
-                  <th>Nama lengkap</th>
-                  <th>Peran</th>
-                  <th>Status</th>
-                  <th>Bergabung</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.data!.items.map((u) => (
-                  <tr key={u.id}>
-                    <td className="mono">{u.username}</td>
-                    <td>{u.full_name}</td>
-                    <td>{roleLabel(u.role)}</td>
-                    <td>
-                      <Badge tone={u.is_active ? "ok" : "bad"}>
-                        {u.is_active ? "Aktif" : "Nonaktif"}
-                      </Badge>
-                    </td>
-                    <td className="small muted">{dateShort(u.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === "summary" ? <SummaryTab store={s} onJump={(key) => setTab(key as (typeof TABS)[number]["key"])} /> : null}
+        {tab === "damage" ? <DamageTab storeId={storeId} storeLabel={storeLabel} /> : null}
+        {tab === "stock" ? <StockTab storeId={storeId} storeLabel={storeLabel} /> : null}
+        {tab === "history" ? <HistoryTab storeId={storeId} storeLabel={storeLabel} /> : null}
+        {tab === "products" ? <ProductsTab storeId={storeId} storeLabel={storeLabel} /> : null}
+        {tab === "sales" ? (
+          <SalesTab
+            storeId={storeId}
+            storeLabel={storeLabel}
+            onView={setViewingSale}
+            onEdit={setEditingSale}
+            onDelete={setDeletingSale}
+            refreshToken={salesToken}
+          />
+        ) : null}
+        {tab === "payments" ? <PaymentsTab storeId={storeId} storeLabel={storeLabel} /> : null}
+        {tab === "people" ? (
+          <PeopleTab storeId={storeId} storeLabel={storeLabel} onAddUser={() => setAddingUser(true)} />
+        ) : null}
       </div>
 
       {editing ? (
@@ -311,7 +184,6 @@ export function StoreDetailPage() {
           onClose={() => setAddingUser(false)}
           onDone={() => {
             setAddingUser(false);
-            users.reload();
             store.reload();
           }}
         />
@@ -332,7 +204,7 @@ export function StoreDetailPage() {
           onClose={() => setEditingSale(null)}
           onDone={() => {
             setEditingSale(null);
-            sales.reload();
+            setSalesToken((n) => n + 1);
             store.reload();
           }}
         />
@@ -345,7 +217,7 @@ export function StoreDetailPage() {
           onClose={() => setDeletingSale(null)}
           onDone={() => {
             setDeletingSale(null);
-            sales.reload();
+            setSalesToken((n) => n + 1);
             store.reload();
           }}
         />
