@@ -15,7 +15,8 @@ from ..schemas.damage_report import (
     DamageReportApprove,
     DamageReportReject,
 )
-from ..services.stock_service import record_damage, convert_quantity
+from ..services.damage_service import approve_core, reject_core
+from ..services.stock_service import convert_quantity
 from ..security import get_current_user, require_bos, log_audit
 from ..tenancy import require_store_id
 from ..config import settings
@@ -171,33 +172,18 @@ def approve_damage_report(
     current_user: User = Depends(require_bos()),
     db: Session = Depends(get_db),
 ):
-    store_id = require_store_id(current_user)
-    report = get_report_for_store(db, report_id, store_id)
-    if report.status != "PENDING":
-        raise HTTPException(status_code=400, detail="Hanya laporan PENDING yang dapat disetujui")
-
-    product = db.query(Product).filter(
-        Product.id == report.product_id, Product.store_id == store_id
-    ).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-
+    report = get_report_for_store(db, report_id, require_store_id(current_user))
     try:
-        qty_to_deduct = float(report.qty_in_base_unit)
-        if qty_to_deduct <= 0:
-            qty_to_deduct = float(report.quantity)
-        record_damage(db, product, report.id, qty_to_deduct, current_user)
+        approve_core(
+            db, report, current_user,
+            audit_action="DAMAGE_REPORT_APPROVE", request=request,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
-
-    report.status = "APPROVED"
-    report.approved_by = current_user.id
-    report.approved_at = datetime.utcnow()
-    db.commit()
-    db.refresh(report)
-    log_audit(db, current_user, "DAMAGE_REPORT_APPROVE", "damage_report", report.id,
-              {"product": product.name, "quantity": float(report.quantity)}, request)
     return report.to_dict()
 
 
@@ -210,15 +196,10 @@ def reject_damage_report(
     db: Session = Depends(get_db),
 ):
     report = get_report_for_store(db, report_id, require_store_id(current_user))
-    if report.status != "PENDING":
-        raise HTTPException(status_code=400, detail="Hanya laporan PENDING yang dapat ditolak")
-
-    report.status = "REJECTED"
-    report.rejected_by = current_user.id
-    report.rejected_at = datetime.utcnow()
-    report.rejection_reason = body.reason
-    db.commit()
-    db.refresh(report)
-    log_audit(db, current_user, "DAMAGE_REPORT_REJECT", "damage_report", report.id,
-              {"reason": body.reason}, request)
+    reject_core(
+        db, report, current_user,
+        reason=body.reason,
+        audit_action="DAMAGE_REPORT_REJECT",
+        request=request,
+    )
     return report.to_dict()
