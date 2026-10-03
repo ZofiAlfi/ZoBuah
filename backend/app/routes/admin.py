@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models.audit_log import AuditLog
+from ..schemas.damage_report import DamageReportReject
 from ..models.broadcast import Broadcast, BroadcastTarget
 from ..models.category import Category
 from ..models.damage_report import DamageReport
@@ -77,6 +78,7 @@ SaleEditRequest,
     TopStore,
 )
 from ..services.stock_service import InsufficientStockError
+from ..services.damage_service import approve_core, reject_core
 from ..services.storage import storage
 from ..security import (
     create_impersonation_token,
@@ -1394,6 +1396,50 @@ def _user_names(db, user_ids):
     }
 
 
+def _damage_photo_url(report):
+    for photo in report.photos:
+        if photo.file_url:
+            return photo.file_url
+        if photo.file_path:
+            return storage.url_for(photo.file_path)
+    return None
+
+
+def _damage_item(db, report) -> DamageReportItem:
+    """Bentuk satu laporan untuk respons.
+
+    Daftar dan aksi setujui/tolak memakai helper yang sama supaya kolomnya
+    tidak bisa berbeda. Kalau keduanya dirangkai sendiri, perm approving
+    akan mengembalikan bentuk berbeda dari yang digambar tabel di layar.
+    """
+    actors = _user_names(
+        db, [report.employee_id, report.approved_by, report.rejected_by]
+    )
+    return DamageReportItem(
+        id=report.id,
+        store_id=report.store_id,
+        product_id=report.product_id,
+        product_name=report.product.name if report.product else None,
+        quantity=float(report.quantity or 0),
+        unit=report.unit,
+        qty_in_base_unit=(
+            float(report.qty_in_base_unit) if report.qty_in_base_unit is not None else None
+        ),
+        reason=report.reason,
+        description=report.description,
+        status=report.status,
+        employee_id=report.employee_id,
+        employee_name=actors.get(report.employee_id),
+        approved_by_name=actors.get(report.approved_by) if report.approved_by else None,
+        approved_at=iso_utc(report.approved_at),
+        rejected_by_name=actors.get(report.rejected_by) if report.rejected_by else None,
+        rejected_at=iso_utc(report.rejected_at),
+        rejection_reason=report.rejection_reason,
+        photos=[u for u in [_damage_photo_url(report)] if u],
+        created_at=iso_utc(report.created_at),
+    )
+
+
 @router.get("/stores/{store_id}/damage-reports", response_model=DamageReportListResponse)
 def store_damage_reports(
     store_id: UUID,
@@ -1440,47 +1486,7 @@ def store_damage_reports(
         .all()
     )
 
-    actors = _user_names(
-        db,
-        [r.employee_id for r in rows]
-        + [r.approved_by for r in rows]
-        + [r.rejected_by for r in rows],
-    )
-
-    def _photo_url(report):
-        for p in report.photos:
-            if p.file_url:
-                return p.file_url
-            if p.file_path:
-                return storage.url_for(p.file_path)
-        return None
-
-    items = [
-        DamageReportItem(
-            id=r.id,
-            store_id=r.store_id,
-            product_id=r.product_id,
-            product_name=r.product.name if r.product else None,
-            quantity=float(r.quantity or 0),
-            unit=r.unit,
-            qty_in_base_unit=(
-                float(r.qty_in_base_unit) if r.qty_in_base_unit is not None else None
-            ),
-            reason=r.reason,
-            description=r.description,
-            status=r.status,
-            employee_id=r.employee_id,
-            employee_name=actors.get(r.employee_id),
-            approved_by_name=actors.get(r.approved_by) if r.approved_by else None,
-            approved_at=iso_utc(r.approved_at),
-            rejected_by_name=actors.get(r.rejected_by) if r.rejected_by else None,
-            rejected_at=iso_utc(r.rejected_at),
-            rejection_reason=r.rejection_reason,
-            photos=[u for u in [_photo_url(r)] if u],
-            created_at=iso_utc(r.created_at),
-        )
-        for r in rows
-    ]
+    items = [_damage_item(db, r) for r in rows]
 
     # Ringkasan dihitung dari seluruh laporan toko, bukan dari baris halaman
     # ini. Kalau dihitung dari rows, angkanya akan ikut berubah setiap kali
@@ -1801,3 +1807,89 @@ def store_categories(
         for c in rows
     ]
     return CategoryListResponse(items=items, meta=_page(page, page_size, total))
+
+# --------------------------------------------------------------------------
+# Persetujuan barang rusak dari Owner Console
+# --------------------------------------------------------------------------
+# Dua endpoint di bawah ini memanggil damage_service yang sama dengan yang
+# dipakai aplikasi POS. Bedanya hanya siapa yang boleh memanggil dan AuditLog
+# mana yang ditulis, bukan logikanya.
+#
+# Kenapa bukan langsung memanggil route POS: route itu memakai
+# require_bos() dan mengambil store_id dari user. Owner platform punya
+# store_id NULL, jadi tidak akan pernah cocok dengan store_id di path --
+# setiap permintaan akan berakhir 404.
+
+
+def _damage_report_for_store(db: Session, store_id: UUID, report_id: UUID) -> DamageReport:
+    """    Laporan yang store_id-nya sama dengan toko di path.
+
+    store_id ikut jadi filter, bukan hanya report_id. Tanpa itu, owner bisa
+    menyetujui laporan toko A dengan menyebut ID-nya di path toko B, dan stok
+    toko A berkurang tanpa pernah ditanyakan ke anyone.
+    """
+    report = db.query(DamageReport).filter(
+        DamageReport.id == report_id,
+        DamageReport.store_id == store_id,
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Laporan tidak ditemukan")
+    return report
+
+
+@router.post(
+    "/stores/{store_id}/damage-reports/{report_id}/approve",
+    response_model=DamageReportItem,
+)
+def admin_approve_damage_report(
+    store_id: UUID,
+    report_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    get_store_or_404(db, store_id)
+    report = _damage_report_for_store(db, store_id, report_id)
+    try:
+        approve_core(
+            db,
+            report,
+            owner,
+            audit_action="DAMAGE_REPORT_APPROVE_ADMIN",
+            request=request,
+        )
+    except HTTPException:
+        # approve_core sudah menolak sebelum menyentuh stok kalau statusnya
+        # bukan PENDING atau produknya hilang. Rollback di sini memastikan
+        # sesi bersih untuk permintaan berikutnya.
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _damage_item(db, report)
+
+
+@router.post(
+    "/stores/{store_id}/damage-reports/{report_id}/reject",
+    response_model=DamageReportItem,
+)
+def admin_reject_damage_report(
+    store_id: UUID,
+    report_id: UUID,
+    body: DamageReportReject,
+    request: Request,
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    get_store_or_404(db, store_id)
+    report = _damage_report_for_store(db, store_id, report_id)
+    reject_core(
+        db,
+        report,
+        owner,
+        reason=body.reason,
+        audit_action="DAMAGE_REPORT_REJECT_ADMIN",
+        request=request,
+    )
+    return _damage_item(db, report)

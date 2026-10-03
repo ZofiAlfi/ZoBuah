@@ -154,7 +154,12 @@ def call(fn, session, **overrides):
         elif default is not inspect.Parameter.empty:
             kwargs[name] = default
         else:
-            raise AssertionError("parameter wajib tanpa default: " + name)
+            # Parameter wajib tanpa default (mis. request: Request, body:
+            # Skema). Test yang butuh nilainya menyediakannya lewat overrides;
+            # sisanya dibiarkan None karena handler tidak akan menacainya --
+            # body dan request baru disentuh setelah service dipanggil, dan
+            # di situlah test memasang stub-nya.
+            kwargs[name] = None
     kwargs["db"] = session
     return fn(**kwargs)
 
@@ -274,3 +279,160 @@ class TestUnauthenticated:
         client = TestClient(app)
         url = "/api/v1/admin/stores/%s/%s" % (STORE_ID, endpoint)
         assert client.get(url).status_code == 401
+
+
+REPORT_ID = "1c1f0d2e-3a4b-5c6d-7e8f-9a0b1c2d3e4f"
+OTHER_STORE_ID = "00000000-0000-0000-0000-000000000001"
+
+
+class StubReport:
+    """Laporan minimal yang cukup untuk _damage_item."""
+
+    id = REPORT_ID
+    store_id = STORE_ID
+    product_id = "11111111-1111-1111-1111-111111111111"
+    product = None
+    employee_id = None
+    approved_by = None
+    rejected_by = None
+    approved_at = None
+    rejected_at = None
+    rejection_reason = None
+    created_at = None
+    quantity = 1.0
+    unit = "pcs"
+    qty_in_base_unit = None
+    reason = "bocor"
+    description = None
+    status = "PENDING"
+    photos = []
+
+
+class StubBody:
+    def __init__(self, reason):
+        self.reason = reason
+
+
+class TestAdminDamageActions:
+    """Dua endpoint persetujuan dari Owner Console."""
+
+    def test_laporan_toko_lain_tidak_bisa_disetujui(self, dry):
+        """Ini pemblrean paling berbahaya di blok ini di blok ini.
+
+        store_id di path dan store_id laporan harus cocok. Kalau hanya
+        report_id yang dipakai, owner bisa menulis path toko A lalu menyebut
+        ID laporan toko B -- stok toko B berkurang tanpa ditanyakan ke siapa
+        pun, dan tidak ada jejak di AuditLog toko B karena store_id-nya NULL.
+        """
+        db = FindReportStub(report=None)
+        with pytest.raises(HTTPException) as exc:
+            admin_routes._damage_report_for_store(db, STORE_ID, REPORT_ID)
+        assert exc.value.status_code == 404
+
+    def test_laporan_yang_cocok_dikembalikan(self, dry):
+        db = FindReportStub(report=StubReport())
+        found = admin_routes._damage_report_for_store(db, STORE_ID, REPORT_ID)
+        assert found.id == REPORT_ID
+
+    def test_approve_memakai_aksi_audit_admin(self, monkeypatch):
+        seen = {}
+
+        def fake_approve(db, report, actor, *, audit_action, request):
+            seen["audit_action"] = audit_action
+            return report
+
+        monkeypatch.setattr(admin_routes, "approve_core", fake_approve)
+        monkeypatch.setattr(admin_routes, "get_store_or_404", lambda db, sid: object())
+
+        db = FindReportStub(report=StubReport())
+        call(
+            admin_routes.admin_approve_damage_report,
+            db,
+            store_id=STORE_ID,
+            report_id=REPORT_ID,
+            request=None,
+        )
+        assert seen["audit_action"] == "DAMAGE_REPORT_APPROVE_ADMIN"
+
+    def test_reject_memakai_aksi_audit_admin(self, monkeypatch):
+        seen = {}
+
+        def fake_reject(db, report, actor, *, reason, audit_action, request):
+            seen["audit_action"] = audit_action
+            seen["reason"] = reason
+            return report
+
+        monkeypatch.setattr(admin_routes, "reject_core", fake_reject)
+        monkeypatch.setattr(admin_routes, "get_store_or_404", lambda db, sid: object())
+
+        db = FindReportStub(report=StubReport())
+        call(
+            admin_routes.admin_reject_damage_report,
+            db,
+            store_id=STORE_ID,
+            report_id=REPORT_ID,
+            reason="barang masih layak jual",
+            body=StubBody("barang masih layak jual"),
+            request=None,
+        )
+        assert seen["audit_action"] == "DAMAGE_REPORT_REJECT_ADMIN"
+        assert seen["reason"] == "barang masih layak jual"
+
+    def test_kegagalan_service_tidak_meninggalkan_sesi_kotor(self, monkeypatch):
+        """Exception dari service harus rollback.
+
+        Tanpa rollback, sesi itu masih memegang transaksi yang gagal dan
+        permintaan berikutnya di sesi yang sama bisa ikut gagal atau, lebih
+        buruk, commit perubahan setengah jadi.
+        """
+
+        def boom(db, report, actor, *, audit_action, request):
+            raise RuntimeError("stok tidak cukup")
+
+        monkeypatch.setattr(admin_routes, "approve_core", boom)
+        monkeypatch.setattr(admin_routes, "get_store_or_404", lambda db, sid: object())
+
+        db = FindReportStub(report=StubReport())
+        with pytest.raises(HTTPException) as exc:
+            call(
+                admin_routes.admin_approve_damage_report,
+                db,
+                store_id=STORE_ID,
+                report_id=REPORT_ID,
+                request=None,
+            )
+        assert exc.value.status_code == 400
+        assert db.rolled_back == 1
+
+    @pytest.mark.parametrize("action", ["approve", "reject"])
+    def test_tidak_bisa_tanpa_token(self, action):
+        client = TestClient(app)
+        url = "/api/v1/admin/stores/%s/damage-reports/%s/%s" % (
+            STORE_ID,
+            REPORT_ID,
+            action,
+        )
+        assert client.post(url, json={"reason": "x" * 20}).status_code == 401
+
+
+class FindReportStub:
+    """Session yang mengembalikan satu laporan atau tidak sama sekali."""
+
+    def __init__(self, report):
+        self.report = report
+        self.rolled_back = 0
+
+    def query(self, *a, **kw):
+        outer = self
+
+        class Q:
+            def filter(self, *a, **kw):
+                return self
+
+            def first(self):
+                return outer.report
+
+        return Q()
+
+    def rollback(self):
+        self.rolled_back += 1
