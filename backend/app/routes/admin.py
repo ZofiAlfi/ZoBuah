@@ -4,11 +4,12 @@ Setiap handler di file ini memakai require_owner(), tanpa kecuali. Bandingkan
 dengan route POS yang memakai get_current_user: satu require_role sudah cukup
 sebagai pagar tunggal untuk seluruh dashboard.
 
-Endpoint administersi satu toko WAJIB menyebut store_id di path. Tidak ada
+Endpoint administrasi satu toko WAJIB menyebut store_id di path. Tidak ada
 "lihat semua tanpa target" untuk data per toko; agregat lintas-toko hanya
 melewati /metrics/*.
 """
-from datetime import datetime, timezone
+import json
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -53,6 +54,16 @@ from ..schemas.admin import (
     PasswordResetResult,
     PlanRow,
     RevenuePoint,
+    CategoryItem,
+    CategoryListResponse,
+    DamageReportItem,
+    DamageReportListResponse,
+    PaymentItem,
+    PaymentListResponse,
+    ProductHistoryItem,
+    ProductHistoryResponse,
+    StockMovementItem,
+    StockMovementListResponse,
 SaleEditRequest,
     SaleDeleteRequest,
     StoreCreate,
@@ -66,6 +77,7 @@ SaleEditRequest,
     TopStore,
 )
 from ..services.stock_service import InsufficientStockError
+from ..services.storage import storage
 from ..security import (
     create_impersonation_token,
     log_audit,
@@ -1324,3 +1336,468 @@ def delete_store_sale(
         request,
     )
     return _as_admin_sale_detail(db, sale)
+
+
+# --------------------------------------------------------------------------
+# Data Browser per toko
+# --------------------------------------------------------------------------
+# Endpoint di blok ini hanya MEMBACA. Satu-satunya endpoint yang mengubah
+# state adalah persetujuan barang rusak di bagian akhir blok ini.
+#
+# Semuanya memakai pola yang sama: get_store_or_404 lebih dulu, baru filter
+# dengan store_id dari path. Pengecekan toko bukan opsional di sini -- tanpa
+# itu, satu UUID toko cukup untuk membaca seluruh data toko lain.
+
+_PRODUCT_ACTIONS = (
+    "PRODUCT_CREATE",
+    "PRODUCT_UPDATE",
+    "PRODUCT_DEACTIVATE",
+    "PRODUCT_REACTIVATE",
+    "PRODUCT_PHOTO_UPLOAD",
+    "PRODUCT_PHOTO_DELETE",
+)
+
+
+def _apply_created_range(query, column, date_from, date_to):
+    """Batas tanggal inklusif per hari.
+
+    Kolom created_at disimpan sebagai UTC naive (datetime.utcnow tanpa
+    tzinfo), sedangkan parameter tanggal dari query string tidak pernah punya
+    timezone. Membandingkan keduanya secara langsung akan menggeser hasil
+    sebesar selisih zona waktu lokal.
+
+    Batas atas memakai < (tanggal + 1 hari), bukan <= tanggal. Dengan <=,
+    semua transaksi setelah jam 00:00 pada tanggal akhir akan hilang.
+    """
+    if date_from is not None:
+        start = datetime(date_from.year, date_from.month, date_from.day)
+        query = query.filter(column >= start)
+    if date_to is not None:
+        end_exclusive = datetime(date_to.year, date_to.month, date_to.day)
+        query = query.filter(column < end_exclusive + timedelta(days=1))
+    return query
+
+
+def _user_names(db, user_ids):
+    """Nama pelaku untuk sekumpulan user_id, satu query.
+
+    Meload per baris berarti satu query tambahan untuk setiap baris tabel.
+    Di halaman berisi 200 baris, itu 200 request ke database hanya untuk
+    menampilkan nama.
+    """
+    ids = [u for u in set(user_ids) if u]
+    if not ids:
+        return {}
+    return {
+        u.id: (u.full_name or u.username)
+        for u in db.query(User).filter(User.id.in_(ids)).all()
+    }
+
+
+@router.get("/stores/{store_id}/damage-reports", response_model=DamageReportListResponse)
+def store_damage_reports(
+    store_id: UUID,
+    status: Optional[str] = Query(None, max_length=20),
+    reason: Optional[str] = Query(None, max_length=50),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    q: Optional[str] = Query(None, max_length=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    get_store_or_404(db, store_id)
+
+    query = db.query(DamageReport).filter(DamageReport.store_id == store_id)
+    if status in ("PENDING", "APPROVED", "REJECTED"):
+        query = query.filter(DamageReport.status == status)
+    if reason:
+        query = query.filter(DamageReport.reason == reason)
+    query = _apply_created_range(query, DamageReport.created_at, date_from, date_to)
+
+    if q:
+        query = query.outerjoin(Product, DamageReport.product_id == Product.id)
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                Product.name.ilike(like),
+                DamageReport.description.ilike(like),
+                DamageReport.reason.ilike(like),
+            )
+        )
+
+    total = query.count()
+    rows = (
+        query.options(
+            joinedload(DamageReport.product),
+            joinedload(DamageReport.employee),
+            joinedload(DamageReport.photos),
+        )
+        .order_by(DamageReport.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    actors = _user_names(
+        db,
+        [r.employee_id for r in rows]
+        + [r.approved_by for r in rows]
+        + [r.rejected_by for r in rows],
+    )
+
+    def _photo_url(report):
+        for p in report.photos:
+            if p.file_url:
+                return p.file_url
+            if p.file_path:
+                return storage.url_for(p.file_path)
+        return None
+
+    items = [
+        DamageReportItem(
+            id=r.id,
+            store_id=r.store_id,
+            product_id=r.product_id,
+            product_name=r.product.name if r.product else None,
+            quantity=float(r.quantity or 0),
+            unit=r.unit,
+            qty_in_base_unit=(
+                float(r.qty_in_base_unit) if r.qty_in_base_unit is not None else None
+            ),
+            reason=r.reason,
+            description=r.description,
+            status=r.status,
+            employee_id=r.employee_id,
+            employee_name=actors.get(r.employee_id),
+            approved_by_name=actors.get(r.approved_by) if r.approved_by else None,
+            approved_at=iso_utc(r.approved_at),
+            rejected_by_name=actors.get(r.rejected_by) if r.rejected_by else None,
+            rejected_at=iso_utc(r.rejected_at),
+            rejection_reason=r.rejection_reason,
+            photos=[u for u in [_photo_url(r)] if u],
+            created_at=iso_utc(r.created_at),
+        )
+        for r in rows
+    ]
+
+    # Ringkasan dihitung dari seluruh laporan toko, bukan dari baris halaman
+    # ini. Kalau dihitung dari rows, angkanya akan ikut berubah setiap kali
+    # pengguna pindah halaman atau mengganti filter.
+    counts = dict(
+        db.query(DamageReport.status, func.count(DamageReport.id))
+        .filter(DamageReport.store_id == store_id)
+        .group_by(DamageReport.status)
+        .all()
+    )
+    return DamageReportListResponse(
+        items=items,
+        meta=_page(page, page_size, total),
+        summary={
+            "total": sum(counts.values()),
+            "pending": counts.get("PENDING", 0),
+            "approved": counts.get("APPROVED", 0),
+            "rejected": counts.get("REJECTED", 0),
+        },
+    )
+
+
+@router.get("/stores/{store_id}/stock-movements", response_model=StockMovementListResponse)
+def store_stock_movements(
+    store_id: UUID,
+    movement_type: Optional[str] = Query(None, max_length=20),
+    product_id: Optional[UUID] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    q: Optional[str] = Query(None, max_length=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    get_store_or_404(db, store_id)
+
+    query = db.query(StockMovement).filter(StockMovement.store_id == store_id)
+    if movement_type:
+        query = query.filter(StockMovement.movement_type == movement_type)
+    if product_id is not None:
+        query = query.filter(StockMovement.product_id == product_id)
+    query = _apply_created_range(query, StockMovement.created_at, date_from, date_to)
+
+    if q:
+        query = query.outerjoin(Product, StockMovement.product_id == Product.id)
+        like = f"%{q}%"
+        query = query.filter(
+            or_(Product.name.ilike(like), StockMovement.notes.ilike(like))
+        )
+
+    total = query.count()
+    rows = (
+        query.options(joinedload(StockMovement.product))
+        .order_by(StockMovement.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    actors = _user_names(db, [r.user_id for r in rows])
+
+    items = [
+        StockMovementItem(
+            id=r.id,
+            product_id=r.product_id,
+            product_name=r.product.name if r.product else None,
+            movement_type=r.movement_type,
+            quantity=float(r.quantity or 0),
+            stock_before=float(r.stock_before or 0),
+            stock_after=float(r.stock_after or 0),
+            reference_type=r.reference_type,
+            notes=r.notes,
+            user_name=actors.get(r.user_id),
+            created_at=iso_utc(r.created_at),
+        )
+        for r in rows
+    ]
+
+    per_type = (
+        db.query(
+            StockMovement.movement_type,
+            func.count(StockMovement.id),
+            func.coalesce(func.sum(StockMovement.quantity), 0),
+        )
+        .filter(StockMovement.store_id == store_id)
+        .group_by(StockMovement.movement_type)
+        .all()
+    )
+
+    def _sum_of(kind):
+        return sum(float(qt) for t, _, qt in per_type if t == kind)
+
+    return StockMovementListResponse(
+        items=items,
+        meta=_page(page, page_size, total),
+        summary={
+            "total_movements": sum(int(c) for _, c, _ in per_type),
+            "in": _sum_of("IN"),
+            "out": _sum_of("OUT"),
+            "sale": _sum_of("SALE"),
+            "opening": _sum_of("OPENING"),
+            "adjustment": _sum_of("ADJUSTMENT"),
+            "damage": _sum_of("DAMAGE"),
+        },
+    )
+
+
+@router.get("/stores/{store_id}/payments", response_model=PaymentListResponse)
+def store_payments(
+    store_id: UUID,
+    method: Optional[str] = Query(None, max_length=20),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    q: Optional[str] = Query(None, max_length=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    get_store_or_404(db, store_id)
+
+    # Payment tidak punya kolom store_id sendiri, jadi kepemilikannya mengikuti
+    # Sale. Join ke Sale bukan cuma untuk menampilkan nomor transaksi --
+    # tanpa filter Sale.store_id, endpoint ini bisa membaca pembayaran toko
+    # mana pun hanya dengan menebak sale_id.
+    query = (
+        db.query(Payment, Sale)
+        .join(Sale, Payment.sale_id == Sale.id)
+        .filter(Sale.store_id == store_id)
+    )
+    if method:
+        query = query.filter(Payment.method == method)
+    query = _apply_created_range(query, Payment.created_at, date_from, date_to)
+    if q:
+        query = query.filter(Sale.transaction_number.ilike(f"%{q}%"))
+
+    total = query.count()
+    rows = (
+        query.options(joinedload(Payment.sale))
+        .order_by(Payment.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    actors = _user_names(db, [p.sale.employee_id for p, _ in rows if p.sale])
+
+    items = [
+        PaymentItem(
+            id=p.id,
+            sale_id=p.sale_id,
+            transaction_number=p.sale.transaction_number if p.sale else None,
+            method=p.method,
+            amount=float(p.amount or 0),
+            cash_received=(
+                float(p.cash_received) if p.cash_received is not None else None
+            ),
+            change_amount=(
+                float(p.change_amount) if p.change_amount is not None else None
+            ),
+            reference=p.reference,
+            file_url=p.file_url,
+            employee_name=actors.get(p.sale.employee_id) if p.sale else None,
+            sale_status=p.sale.status if p.sale else None,
+            created_at=iso_utc(p.created_at),
+        )
+        for p, _ in rows
+    ]
+
+    per_method = (
+        db.query(
+            Payment.method,
+            func.coalesce(func.sum(Payment.amount), 0),
+            func.count(Payment.id),
+        )
+        .join(Sale, Payment.sale_id == Sale.id)
+        .filter(Sale.store_id == store_id)
+        .group_by(Payment.method)
+        .all()
+    )
+    return PaymentListResponse(
+        items=items,
+        meta=_page(page, page_size, total),
+        summary={
+            "total_amount": sum(float(v) for _, v, _ in per_method),
+            "total_payments": sum(int(c) for _, _, c in per_method),
+            "by_method": {m: float(v) for m, v, _ in per_method},
+        },
+    )
+
+
+@router.get("/stores/{store_id}/product-history", response_model=ProductHistoryResponse)
+def store_product_history(
+    store_id: UUID,
+    action: Optional[str] = Query(None, max_length=60),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    q: Optional[str] = Query(None, max_length=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    """Riwayat tambah dan ubah produk.
+
+    Sumbernya audit_logs, bukan tabel produk. Tabel products tidak menyimpan
+    siapa yang membuat produk atau kapan terakhir diubah, jadi pertanyaan
+    "barang ini siapa yang tambahkan" tidak bisa dijawab dari sana.
+
+    Keterbatasan yang perlu diketahui: audit_logs.store_id mengikuti store_id
+    pelaku. Bila owner platform melakukan aksinya sendiri, store_id-nya NULL
+    dan baris itu tidak muncul di riwayat toko mana pun. Aksi produk saat
+    ini seluruhnya dilakukan BOS atau karyawan toko, jadi belum jadi
+    masalah -- tapi akan jadi begitu owner bisa menambah produk dari console.
+    """
+    get_store_or_404(db, store_id)
+
+    query = db.query(AuditLog).filter(
+        AuditLog.store_id == store_id,
+        AuditLog.action.in_(_PRODUCT_ACTIONS),
+    )
+    if action:
+        query = query.filter(AuditLog.action == action)
+    query = _apply_created_range(query, AuditLog.created_at, date_from, date_to)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                AuditLog.details.ilike(like),
+                AuditLog.entity_id.ilike(like),
+            )
+        )
+
+    total = query.count()
+    rows = (
+        query.order_by(AuditLog.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    actors = _user_names(db, [r.user_id for r in rows])
+
+    items = []
+    for r in rows:
+        details = None
+        if r.details:
+            try:
+                details = json.loads(r.details)
+            except (ValueError, TypeError):
+                details = {"raw": r.details}
+        name = None
+        if isinstance(details, dict):
+            name = details.get("name")
+            changes = details.get("changes")
+            if name is None and isinstance(changes, dict):
+                name = changes.get("name")
+        items.append(
+            ProductHistoryItem(
+                id=r.id,
+                action=r.action,
+                product_id=r.entity_id,
+                product_name=name,
+                details=details,
+                user_name=actors.get(r.user_id),
+                ip_address=r.ip_address,
+                created_at=iso_utc(r.created_at),
+            )
+        )
+    return ProductHistoryResponse(items=items, meta=_page(page, page_size, total))
+
+
+@router.get("/stores/{store_id}/categories", response_model=CategoryListResponse)
+def store_categories(
+    store_id: UUID,
+    q: Optional[str] = Query(None, max_length=100),
+    is_active: Optional[bool] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    get_store_or_404(db, store_id)
+
+    query = db.query(Category).filter(Category.store_id == store_id)
+    if q:
+        query = query.filter(Category.name.ilike(f"%{q}%"))
+    if is_active is not None:
+        query = query.filter(Category.is_active.is_(is_active))
+
+    total = query.count()
+    rows = (
+        query.order_by(Category.name.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    # Jumlah produk per kategori dihitung satu query agregat, bukan satu COUNT
+    # per kategori. Versi per-kategori mengulang query sebanyak jumlah baris.
+    counts = dict(
+        db.query(Product.category_id, func.count(Product.id))
+        .filter(
+            Product.store_id == store_id,
+            Product.category_id.isnot(None),
+        )
+        .group_by(Product.category_id)
+        .all()
+    )
+
+    items = [
+        CategoryItem(
+            id=c.id,
+            name=c.name,
+            description=c.description,
+            is_active=bool(c.is_active),
+            product_count=int(counts.get(c.id, 0)),
+            created_at=iso_utc(c.created_at),
+        )
+        for c in rows
+    ]
+    return CategoryListResponse(items=items, meta=_page(page, page_size, total))

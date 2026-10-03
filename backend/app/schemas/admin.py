@@ -507,3 +507,101 @@ class AdminSaleDetail(AdminSaleData):
     items: list[SaleItemSnapshot]
     payment: Optional[PaymentSnapshot] = None
     edit_history: list[AuditLogItem] = []
+
+class DamageReportItem(BaseModel):
+    id: UUID
+    store_id: Optional[UUID] = None
+    product_id: Optional[UUID] = None
+    product_name: Optional[str] = None
+    quantity: float
+    unit: str
+    qty_in_base_unit: Optional[float] = None
+    reason: str
+    description: Optional[str] = None
+    status: str
+    employee_id: Optional[UUID] = None
+    employee_name: Optional[str] = None
+    approved_by_name: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    rejected_by_name: Optional[str] = None
+    rejected_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    photos: list[str] = []
+    created_at: Optional[datetime] = None
+
+
+class DamageReportListResponse(BaseModel):
+    items: list[DamageReportItem]
+    meta: PageMeta
+    summary: dict = {}
+
+
+class StockMovementItem(BaseModel):
+    id: UUID
+    product_id: Optional[UUID] = None
+    product_name: Optional[str] = None
+    movement_type: str
+    quantity: float
+    stock_before: float
+    stock_after: float
+    reference_type: Optional[str] = None
+    notes: Optional[str] = None
+    user_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class StockMovementListResponse(BaseModel):
+    items: list[StockMovementItem]
+    meta: PageMeta
+    summary: dict = {}
+
+
+class PaymentItem(BaseModel):
+    id: UUID
+    sale_id: Optional[UUID] = None
+    transaction_number: Optional[str] = None
+    method: str
+    amount: float
+    cash_received: Optional[float] = None
+    change_amount: Optional[float] = None
+    reference: Optional[str] = None
+    file_url: Optional[str] = None
+    employee_name: Optional[str] = None
+    sale_status: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class PaymentListResponse(BaseModel):
+    items: list[PaymentItem]
+    meta: PageMeta
+    summary: dict = {}
+
+
+class ProductHistoryItem(BaseModel):
+    id: UUID
+    action: str
+    product_id: Optional[str] = None
+    product_name: Optional[str] = None
+    details: Optional[dict] = None
+    user_name: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class ProductHistoryResponse(BaseModel):
+    items: list[ProductHistoryItem]
+    meta: PageMeta
+
+
+class CategoryItem(BaseModel):
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    is_active: bool
+    product_count: int = 0
+    created_at: Optional[datetime] = None
+
+
+class CategoryListResponse(BaseModel):
+    items: list[CategoryItem]
+    meta: PageMeta
