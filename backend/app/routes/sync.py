@@ -18,6 +18,7 @@ from ..models.broadcast import Broadcast, BroadcastLevel, BroadcastTarget
 from ..schemas.sync import SyncPushRequest, SyncPullRequest, SyncPullResponse
 from ..security import get_current_user, register_device, log_audit
 from ..tenancy import require_store_id
+from ..services.damage_service import resolve_reported_quantity
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -246,11 +247,24 @@ def push_data(
 
                 emp_id = resolve_employee(data.get("employee_id"))
 
+                report_unit = data.get("unit", product.unit)
+                qty_in_base = resolve_reported_quantity(
+                    data["quantity"], report_unit, product.unit
+                )
+                if qty_in_base is None:
+                    rejected += 1
+                    results.append({
+                        "entity_id": entity_id,
+                        "status": "unit_not_convertible",
+                    })
+                    continue
+
                 report = DamageReport(
                     id=entity_id,
                     product_id=data["product_id"],
                     quantity=data["quantity"],
-                    unit=data.get("unit", product.unit),
+                    unit=report_unit,
+                    qty_in_base_unit=qty_in_base,
                     reason=data.get("reason", "OTHER"),
                     description=data.get("description"),
                     status="PENDING",

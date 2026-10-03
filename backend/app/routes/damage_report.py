@@ -15,8 +15,7 @@ from ..schemas.damage_report import (
     DamageReportApprove,
     DamageReportReject,
 )
-from ..services.damage_service import approve_core, reject_core
-from ..services.stock_service import convert_quantity
+from ..services.damage_service import approve_core, reject_core, resolve_reported_quantity
 from ..security import get_current_user, require_bos, log_audit
 from ..tenancy import require_store_id
 from ..config import settings
@@ -71,16 +70,12 @@ def create_damage_report(
             employee_id = emp.id
 
     # Konversi kuantitas ke satuan stok produk bila satuannya berbeda.
-    qty_in_base = None
-    if (body.unit or "").strip().lower() != (product.unit or "").strip().lower():
-        qty_in_base = convert_quantity(body.quantity, body.unit, product.unit)
-        if qty_in_base is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Satuan '{body.unit}' tidak bisa dikonversi ke satuan produk '{product.unit}' (kg/gram/buah/pcs)",
-            )
-    else:
-        qty_in_base = body.quantity
+    qty_in_base = resolve_reported_quantity(body.quantity, body.unit, product.unit)
+    if qty_in_base is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Satuan '{body.unit}' tidak bisa dikonversi ke satuan produk '{product.unit}' (kg/gram/buah/pcs)",
+        )
 
     report_id = body.id or _uuid.uuid4()
     report = DamageReport(

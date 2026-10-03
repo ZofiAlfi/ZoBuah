@@ -11,6 +11,12 @@ export const DAMAGE_STATUS: Record<string, { label: string; tone: string }> = {
   REJECTED: { label: "Ditolak", tone: "bad" },
 };
 
+/* Backend menolak alasan penolakan di bawah 10 karakter (services/damage_service.py,
+ * reject_core). Angkanya ditulis di sini supaya tombol Tolak tidak menyala untuk
+ * alasan yang pasti ditolak server.
+ */
+export const REJECT_REASON_MIN = 10;
+
 export const DAMAGE_REASONS: { value: string; label: string }[] = [
   { value: "", label: "Semua alasan" },
   { value: "BUSUK", label: "Busuk" },

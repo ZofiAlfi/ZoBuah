@@ -24,7 +24,26 @@ from ..models.damage_report import DamageReport
 from ..models.product import Product
 from ..models.user import User
 from ..security import log_audit
-from .stock_service import record_damage
+from .stock_service import convert_quantity, record_damage
+
+
+def resolve_reported_quantity(quantity, from_unit, product_unit):
+    """Jumlah laporan dalam satuan stok produk, atau None kalau tak bisa.
+
+    Laporan bisa dibuat dalam satuan kemasan ("2 pcs") sementara stok disimpan
+    per satuan dasar ("kg"). Kalau angkanya tidak diubah ke satuan produk, dan
+    kolom `qty_in_base_unit` kosong, approve akan memotong 2 kg dari laporan
+    yang maksudnya 2 pcs. Itu galat yang tidak pernah melempar error, jadi
+    nilainya harus benar sejak laporan disimpan.
+
+    None berarti satuannya tidak dikenal (mis. "box" ke "kg"). Laporan seperti
+    ini sebaiknya ditolak, bukan disimpan dengan tebakan.
+    """
+    f = (from_unit or "").strip().lower()
+    t = (product_unit or "").strip().lower()
+    if f == t:
+        return quantity
+    return convert_quantity(quantity, from_unit, product_unit)
 
 
 def _get_product(db: Session, report: DamageReport) -> Product:

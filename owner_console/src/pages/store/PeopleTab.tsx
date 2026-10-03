@@ -15,10 +15,12 @@ import { describeFilters, exportTablePdf } from "../../print/exportPdf";
 export function PeopleTab({
   storeId,
   storeLabel,
+  refreshToken,
   onAddUser,
 }: {
   storeId: string;
   storeLabel: string;
+  refreshToken?: number;
   onAddUser: () => void;
 }) {
   const categories = usePagedTable<StoreCategory>(`/admin/stores/${storeId}/categories`, {
@@ -27,8 +29,12 @@ export function PeopleTab({
   const users = usePagedTable<AdminUser>(`/admin/stores/${storeId}/users`, {
     pageSize: 50,
     searchable: false,
+    refreshToken,
   });
-  const { sort, setSort } = useSort({ key: "name", dir: "asc" });
+  // Dua tabel, dua urutan. Kalau mereka berbagi satu state, mengurutkan
+  // kategori diam-diam mengubah urutan pengguna juga.
+  const categorySort = useSort({ key: "name", dir: "asc" });
+  const userSort = useSort({ key: "name", dir: "asc" });
 
   const categorySubtitle = describeFilters([
     categories.filters.is_active === "true"
@@ -164,8 +170,8 @@ export function PeopleTab({
           error={categories.error}
           onRetry={categories.reload}
           empty="Belum ada kategori di toko ini."
-          sort={sort}
-          onSortChange={setSort}
+          sort={categorySort.sort}
+          onSortChange={categorySort.setSort}
         />
 
         <Pagination
@@ -211,8 +217,8 @@ export function PeopleTab({
           error={users.error}
           onRetry={users.reload}
           empty="Belum ada pengguna di toko ini."
-          sort={sort}
-          onSortChange={setSort}
+          sort={userSort.sort}
+          onSortChange={userSort.setSort}
         />
 
         <Pagination

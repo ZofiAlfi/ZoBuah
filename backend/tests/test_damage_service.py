@@ -20,6 +20,7 @@ from app.services.damage_service import (
     _deductable_quantity,
     approve_core,
     reject_core,
+    resolve_reported_quantity,
 )
 
 
@@ -294,3 +295,35 @@ class TestRejectCore:
         )
         actions = [getattr(o, "action", None) for o in db.added]
         assert "DAMAGE_REPORT_REJECT_ADMIN" in actions
+
+
+class TestResolveReportedQuantity:
+    """Laporan dari POS offline harus punya jumlah dalam satuan stok produk.
+
+    Ada dua pintu laporan barang rusak: `POST /damage-reports` (langsung
+    ke server) dan `/sync/push` (perangkat yang sedang offline). Keduanya harus
+    mengubah satuan laporan ke satuan stok produk sebelum disimpan, karena
+    `qty_in_base_unit` yang kosong membuat approve gagal dengan pesan yang tidak
+    menjelaskan apa pun.
+
+    Bug yang pernah muncul: `/sync/push` tidak pernah mengisi kolom itu, jadi
+    nilainya NULL dan `float(None)` melempar TypeError. Fallback di
+    `_deductable_quantity` sekarang menutup kasus tersebut, tapi fallback memakai
+    angka yang belum dikonversi -- kalau satuan beda, stok terpotong sejumlah
+    yang salah dan tidak ada error yang muncul. Itu lebih buruk daripada gagal.
+    """
+
+    def test_satuan_sama_tidak_perlu_konversi(self):
+        assert resolve_reported_quantity(2, "kg", "kg") == 2
+
+    def test_satuan_berbeda_dikonversi(self):
+        assert resolve_reported_quantity(2000, "gram", "kg") == 2
+
+    def test_satuan_tidak_bisa_dikonversi_menolak(self):
+        assert resolve_reported_quantity(2, "box", "kg") is None
+
+    def test_satuan_kosong_ditolak_karena_tidak_bisa_ditebak(self):
+        # `POST /damage-reports` juga menolak satuan kosong dengan alasan yang
+        # sama, jadi kedua pintu masuk punya aturan yang sama.
+        assert resolve_reported_quantity(3, None, "kg") is None
+        assert resolve_reported_quantity(3, "", "kg") is None

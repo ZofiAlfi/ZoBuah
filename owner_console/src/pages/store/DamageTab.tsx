@@ -17,7 +17,7 @@ import { dateTime, num } from "../../lib/format";
 import { usePagedTable } from "../../lib/usePagedTable";
 import type { DamageReport, DamageSummary } from "../../lib/types";
 import { describeFilters, exportTablePdf } from "../../print/exportPdf";
-import { DAMAGE_REASONS, DAMAGE_STATUS, reasonLabel } from "./shared";
+import { DAMAGE_REASONS, DAMAGE_STATUS, REJECT_REASON_MIN, reasonLabel } from "./shared";
 
 export function DamageTab({ storeId, storeLabel }: { storeId: string; storeLabel: string }) {
   const toast = useToast();
@@ -215,8 +215,12 @@ export function DamageTab({ storeId, storeLabel }: { storeId: string; storeLabel
           report={detail}
           onClose={() => setDetail(null)}
           onDone={(next, message) => {
+            // Baris cukup di-patch supaya tabel tidak berkedip. Ringkasan
+            // dihitung ulang dari server, jadi harus dimuat ulang: kalau tidak,
+            // jumlah "Menunggu" masih yang lama padahal barisnya sudah final.
             table.patchItem(next.id, next);
             setDetail(next);
+            table.reload();
             toast(message);
           }}
         />
@@ -261,8 +265,8 @@ function DamageDetailModal({
   }
 
   async function reject() {
-    if (reason.trim().length < 3) {
-      setError("Alasan penolakan minimal 3 karakter.");
+    if (reason.trim().length < REJECT_REASON_MIN) {
+      setError(`Alasan penolakan minimal ${REJECT_REASON_MIN} karakter.`);
       return;
     }
     setBusy("reject");
@@ -412,7 +416,7 @@ function DamageDetailModal({
               className="btn btn-outline-danger"
               type="button"
               onClick={reject}
-              disabled={busy !== null || reason.trim().length < 3}
+              disabled={busy !== null || reason.trim().length < REJECT_REASON_MIN}
             >
               {busy === "reject" ? "Memproses..." : "Ya, tolak laporan"}
             </button>

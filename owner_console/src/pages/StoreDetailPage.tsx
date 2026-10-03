@@ -48,6 +48,10 @@ export function StoreDetailPage() {
   const [editingSale, setEditingSale] = useState<AdminSale | null>(null);
   const [deletingSale, setDeletingSale] = useState<AdminSale | null>(null);
   const [salesToken, setSalesToken] = useState(0);
+  // Tab PeopleTab punya tabelnya sendiri yang diambil dari API, jadi menambah
+  // pengguna tidak cukup dengan me-reload kartu toko: tabel di dalam tab juga
+  // perlu tahu bahwa datanya berubah.
+  const [peopleToken, setPeopleToken] = useState(0);
 
   if (store.loading) return <Loading />;
   if (store.error) return <ErrorBox message={store.error} onRetry={store.reload} />;
@@ -162,7 +166,12 @@ export function StoreDetailPage() {
         ) : null}
         {tab === "payments" ? <PaymentsTab storeId={storeId} storeLabel={storeLabel} /> : null}
         {tab === "people" ? (
-          <PeopleTab storeId={storeId} storeLabel={storeLabel} onAddUser={() => setAddingUser(true)} />
+          <PeopleTab
+            storeId={storeId}
+            storeLabel={storeLabel}
+            refreshToken={peopleToken}
+            onAddUser={() => setAddingUser(true)}
+          />
         ) : null}
       </div>
 
@@ -184,6 +193,7 @@ export function StoreDetailPage() {
           onClose={() => setAddingUser(false)}
           onDone={() => {
             setAddingUser(false);
+            setPeopleToken((n) => n + 1);
             store.reload();
           }}
         />
