@@ -1,4 +1,4 @@
-"""Endpoint dashboard OWNER untuk ZoBuah.
+﻿"""Endpoint dashboard OWNER untuk ZoBuah.
 
 Setiap handler di file ini memakai require_owner(), tanpa kecuali. Bandingkan
 dengan route POS yang memakai get_current_user: satu require_role sudah cukup
@@ -67,6 +67,7 @@ from ..schemas.admin import (
     StockMovementListResponse,
 SaleEditRequest,
     SaleDeleteRequest,
+    StockMovementDetail,
     StoreCreate,
     StoreDetail,
     StoreListItem,
@@ -1308,7 +1309,7 @@ def delete_store_sale(
 ):
     """Hapus (soft) transaksi oleh owner: status jadi batal, stok kembali.
 
-    Bukan penghapusan fisik — riwayat, laporan, dan audit tetap ada supaya bisa
+    Bukan penghapusan fisik â€” riwayat, laporan, dan audit tetap ada supaya bisa
     dikontrol/kontrol. Mirip cancel milik BOS, tapi dicatat sebagai SALE_DELETE
     dan boleh ditarik kembali tanpa syarat jam. Fisik yang "hilang" hanya dari
     statistik: seluruh KPI owner memfilter status COMPLETED."""
@@ -1373,23 +1374,22 @@ _PRODUCT_ACTIONS = (
 )
 
 
-def _apply_created_range(query, column, date_from, date_to):
+def _apply_created_range(query, column, date_from, date_to, tz_offset_hours: int = 7):
     """Batas tanggal inklusif per hari.
 
     Kolom created_at disimpan sebagai UTC naive (datetime.utcnow tanpa
-    tzinfo), sedangkan parameter tanggal dari query string tidak pernah punya
-    timezone. Membandingkan keduanya secara langsung akan menggeser hasil
-    sebesar selisih zona waktu lokal.
-
-    Batas atas memakai < (tanggal + 1 hari), bukan <= tanggal. Dengan <=,
-    semua transaksi setelah jam 00:00 pada tanggal akhir akan hilang.
+    tzinfo). Parameter tanggal dari query string adalah tanggal LOKAL
+    (WIB). Untuk mencocokkan 'hari ini' di WIB, kita konversi range
+    WIB (date_from 00:00 WIB) ke UTC range (date_from-1 17:00 UTC).
     """
     if date_from is not None:
-        start = datetime(date_from.year, date_from.month, date_from.day)
-        query = query.filter(column >= start)
+        start_local = datetime(date_from.year, date_from.month, date_from.day)
+        start_utc = start_local - timedelta(hours=tz_offset_hours)
+        query = query.filter(column >= start_utc)
     if date_to is not None:
-        end_exclusive = datetime(date_to.year, date_to.month, date_to.day)
-        query = query.filter(column < end_exclusive + timedelta(days=1))
+        end_local_exclusive = datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1)
+        end_utc_exclusive = end_local_exclusive - timedelta(hours=tz_offset_hours)
+        query = query.filter(column < end_utc_exclusive)
     return query
 
 
@@ -1527,6 +1527,7 @@ def store_stock_movements(
     store_id: UUID,
     movement_type: Optional[str] = Query(None, max_length=20),
     product_id: Optional[UUID] = None,
+    user_id: Optional[UUID] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     q: Optional[str] = Query(None, max_length=100),
@@ -1542,6 +1543,8 @@ def store_stock_movements(
         query = query.filter(StockMovement.movement_type == movement_type)
     if product_id is not None:
         query = query.filter(StockMovement.product_id == product_id)
+    if user_id is not None:
+        query = query.filter(StockMovement.user_id == user_id)
     query = _apply_created_range(query, StockMovement.created_at, date_from, date_to)
 
     if q:
@@ -1570,8 +1573,10 @@ def store_stock_movements(
             quantity=float(r.quantity or 0),
             stock_before=float(r.stock_before or 0),
             stock_after=float(r.stock_after or 0),
+            reference_id=r.reference_id,
             reference_type=r.reference_type,
             notes=r.notes,
+            user_id=r.user_id,
             user_name=actors.get(r.user_id),
             created_at=iso_utc(r.created_at),
         )
@@ -1589,21 +1594,142 @@ def store_stock_movements(
         .all()
     )
 
-    def _sum_of(kind):
-        return sum(float(qt) for t, _, qt in per_type if t == kind)
+    # Tipe yang mengurangi stok. Dipakai untuk menjumlahkan selisih dengan
+    # tanda yang benar, bukan sekadar menjumlahkan quantity mentah: stok masuk
+    # dan penjualan sama-sama punya quantity positif di kolom itu.
+    OUT_TYPES = {"SALE", "DAMAGE", "ADJUSTMENT_NEGATIVE", "RETURN_OUT"}
+
+    total_in = 0.0
+    total_out = 0.0
+    by_type: dict[str, float] = {}
+    for kind, _count, qty in per_type:
+        amount = float(qty or 0)
+        signed = -amount if kind in OUT_TYPES else amount
+        by_type[kind] = signed
+        if signed >= 0:
+            total_in += signed
+        else:
+            total_out += signed
 
     return StockMovementListResponse(
         items=items,
         meta=_page(page, page_size, total),
         summary={
             "total_movements": sum(int(c) for _, c, _ in per_type),
-            "in": _sum_of("IN"),
-            "out": _sum_of("OUT"),
-            "sale": _sum_of("SALE"),
-            "opening": _sum_of("OPENING"),
-            "adjustment": _sum_of("ADJUSTMENT"),
-            "damage": _sum_of("DAMAGE"),
+            # in/out sudah ber(+) dan ber(-), jadi total_out selalu negatif.
+            "in": round(total_in, 3),
+            "out": round(total_out, 3),
+            "net": round(total_in + total_out, 3),
+            "by_type": {k: round(v, 3) for k, v in sorted(by_type.items())},
+            "sale": round(by_type.get("SALE", 0.0), 3),
+            "stock_in": round(by_type.get("STOCK_IN", 0.0), 3),
+            "opening": round(by_type.get("INITIAL", 0.0), 3),
+            "adjustment": round(
+                by_type.get("ADJUSTMENT", 0.0) + by_type.get("ADJUSTMENT_NEGATIVE", 0.0), 3
+            ),
+            "damage": round(by_type.get("DAMAGE", 0.0), 3),
+            "return": round(by_type.get("RETURN", 0.0), 3),
         },
+    )
+
+
+@router.get(
+    "/stores/{store_id}/stock-movements/{movement_id}",
+    response_model=StockMovementDetail,
+)
+def stock_movement_detail(
+    store_id: UUID,
+    movement_id: UUID,
+    db: Session = Depends(get_db),
+    owner: User = Depends(require_owner()),
+):
+    """Detail satu baris riwayat stok, termasuk jejak audit terkait.
+
+    Wajib punya store_id di path dan movement-nya harus milik toko itu, supaya
+    id-nya tidak bisa dipakai untuk menebak baris toko lain.
+    """
+    store = get_store_or_404(db, store_id)
+
+    row = (
+        db.query(StockMovement)
+        .options(joinedload(StockMovement.product))
+        .filter(StockMovement.id == movement_id, StockMovement.store_id == store_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="Pergerakan stok tidak ditemukan pada toko ini"
+        )
+
+    actors = _user_names(db, [row.user_id])
+    product = row.product
+
+    # Jejak audit: audit log yang menyebut produk atau dokumen yang sama dalam
+    # rentang waktu yang berdekatan. Ini yang membuat detail bisa dipakai buat
+    # menelusuri "kenapa stok ini berubah", bukan cuma melihat angkanya.
+    audit_query = db.query(AuditLog).filter(
+        AuditLog.store_id == store_id,
+        AuditLog.created_at >= (row.created_at or datetime.utcnow()) - timedelta(hours=1),
+        AuditLog.created_at <= (row.created_at or datetime.utcnow()) + timedelta(hours=1),
+    )
+    if row.user_id is not None:
+        audit_query = audit_query.filter(AuditLog.user_id == row.user_id)
+    if product is not None:
+        # entity_id bertipe String, sedangkan product.id dan reference_id
+        # bertipe UUID. Harus dibandingkan sebagai teks, kalau tidak PostgreSQL
+        # menolak dengan "operator does not exist: character varying = uuid".
+        audit_query = audit_query.filter(
+            or_(
+                AuditLog.entity_id == str(product.id),
+                AuditLog.entity_id == (str(row.reference_id) if row.reference_id else None),
+                AuditLog.details.ilike(f"%{product.name}%"),
+            )
+        )
+    audit_rows = audit_query.order_by(AuditLog.created_at.desc()).limit(20).all()
+    audit_actors = _user_names(db, [a.user_id for a in audit_rows])
+
+    audit_items = []
+    for a in audit_rows:
+        # Kolom details menyimpan JSON sebagai TEKS, bukan dict. Kalau diteruskan
+        # apa adanya ke schema yang mengharapkan dict, responsnya akan 500.
+        detail_json = None
+        if a.details:
+            try:
+                detail_json = json.loads(a.details)
+            except (ValueError, TypeError):
+                detail_json = {"raw": a.details}
+        audit_items.append(
+            ProductHistoryItem(
+                id=a.id,
+                action=a.action,
+                product_id=str(product.id) if product else None,
+                product_name=product.name if product else None,
+                details=detail_json,
+                user_name=audit_actors.get(a.user_id),
+                ip_address=a.ip_address,
+                created_at=iso_utc(a.created_at),
+            )
+        )
+
+    return StockMovementDetail(
+        id=row.id,
+        store_id=store_id,
+        store_code=store.code,
+        store_name=store.name,
+        product_id=row.product_id,
+        product_name=product.name if product else None,
+        product_unit=product.unit if product else None,
+        movement_type=row.movement_type,
+        quantity=float(row.quantity or 0),
+        stock_before=float(row.stock_before or 0),
+        stock_after=float(row.stock_after or 0),
+        reference_id=row.reference_id,
+        reference_type=row.reference_type,
+        notes=row.notes,
+        user_id=row.user_id,
+        user_name=actors.get(row.user_id),
+        created_at=iso_utc(row.created_at),
+        audit=audit_items,
     )
 
 
@@ -1906,3 +2032,4 @@ def admin_reject_damage_report(
         request=request,
     )
     return _damage_item(db, report)
+

@@ -544,10 +544,23 @@ class StockMovementItem(BaseModel):
     quantity: float
     stock_before: float
     stock_after: float
+    reference_id: Optional[UUID] = None
     reference_type: Optional[str] = None
     notes: Optional[str] = None
+    user_id: Optional[UUID] = None
     user_name: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+class StockMovementDetail(StockMovementItem):
+    """Detail satu baris riwayat stok, termasuk jejak audit terkait."""
+
+    store_id: Optional[UUID] = None
+    store_code: Optional[str] = None
+    store_name: Optional[str] = None
+    product_unit: Optional[str] = None
+    reference_label: Optional[str] = None
+    audit: list["ProductHistoryItem"] = []
 
 
 class StockMovementListResponse(BaseModel):
@@ -591,6 +604,12 @@ class ProductHistoryItem(BaseModel):
 class ProductHistoryResponse(BaseModel):
     items: list[ProductHistoryItem]
     meta: PageMeta
+
+
+# StockMovementDetail menyebut ProductHistoryItem yang baru didefinisikan di
+# atasnya. Forward reference perlu diselesaikan ulang supaya Pydantic tidak
+# menyimpannya sebagai placeholder.
+StockMovementDetail.model_rebuild()
 
 
 class CategoryItem(BaseModel):
