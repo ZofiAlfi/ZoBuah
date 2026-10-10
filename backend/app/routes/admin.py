@@ -1378,16 +1378,23 @@ def _apply_created_range(query, column, date_from, date_to, tz_offset_hours: int
     """Batas tanggal inklusif per hari.
 
     Kolom created_at disimpan sebagai UTC naive (datetime.utcnow tanpa
-    tzinfo). Parameter tanggal dari query string adalah tanggal LOKAL
-    (WIB). Untuk mencocokkan 'hari ini' di WIB, kita konversi range
-    WIB (date_from 00:00 WIB) ke UTC range (date_from-1 17:00 UTC).
+    tzinfo). Parameter tanggal dari query string adalah tanggal LOKAL (WIB).
+
+    Normal: konversi range WIB ke UTC range (start WIB 00:00 = UTC start - 7h).
+    Hack: jika jam server UTC >= 23:00, dianggap sudah masuk 'hari baru' WIB
+    (user request) - geser range +1 hari untuk menghindari bug perbedaan waktu.
     """
+    now_utc = datetime.utcnow()
+    shift_extra = 0
+    if now_utc.hour >= 23:
+        shift_extra = 1
+
     if date_from is not None:
-        start_local = datetime(date_from.year, date_from.month, date_from.day)
+        start_local = datetime(date_from.year, date_from.month, date_from.day) + timedelta(days=shift_extra)
         start_utc = start_local - timedelta(hours=tz_offset_hours)
         query = query.filter(column >= start_utc)
     if date_to is not None:
-        end_local_exclusive = datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1)
+        end_local_exclusive = datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1) + timedelta(days=shift_extra)
         end_utc_exclusive = end_local_exclusive - timedelta(hours=tz_offset_hours)
         query = query.filter(column < end_utc_exclusive)
     return query
@@ -2032,4 +2039,5 @@ def admin_reject_damage_report(
         request=request,
     )
     return _damage_item(db, report)
+
 
