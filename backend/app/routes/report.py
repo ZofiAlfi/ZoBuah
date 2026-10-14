@@ -243,13 +243,13 @@ def dashboard(
     now = datetime.now()
 
     # Hari operasional berganti pukul 23.00 (hanya sementara)
-    operational_date = (now - timedelta(hours=23)).date()
+    operational_date = (now - timedelta(hours=1)).date()
 
     # Awal hari operasional pukul 23.00 pada hari sebelumnya (hanya sementara)
     today_start = datetime.combine(
         operational_date - timedelta(days=1),
         datetime.min.time(),
-    ).replace(hour=23)
+    ).replace(hour=1)
 
     # Akhir hari operasional pukul 23.00 pada tanggal laporan (hanya sementara)
     today_end = today_start + timedelta(days=1)
