@@ -241,7 +241,7 @@ def dashboard(
     db: Session = Depends(get_db),
 ):
     now = datetime.now()
-    today_start = now.replace(hour=-1, minute=0, second=0, microsecond=0)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     store_id = require_store_id(current_user)
 
