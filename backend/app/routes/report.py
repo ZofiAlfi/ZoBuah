@@ -41,6 +41,7 @@ def parse_date(date_str: Optional[str], default):
     except ValueError:
         raise HTTPException(status_code=400, detail="Format tanggal salah (YYYY-MM-DD)")
 
+
 @router.get("/daily")
 def daily_report(
     current_user: User = Depends(require_bos()),
@@ -49,34 +50,24 @@ def daily_report(
 ):
     if date_str:
         date_obj = parse_date(date_str, datetime.now()).date()
+        today = datetime.combine(date_obj, datetime.min.time())
     else:
-        # Hari operasional berganti pada pukul 23.00
-        date_obj = (datetime.now() - timedelta(hours=23)).date()
-
-    # Awal hari operasional: pukul 23.00 pada hari sebelumnya (hanya sementara)
-    today = datetime.combine(
-        date_obj - timedelta(days=1),
-        datetime.min.time(),
-    ).replace(hour=23)
-
-    # Akhir hari operasional: pukul 23.00 pada tanggal laporan (hanya sementara)
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     end = today + timedelta(days=1)
-
     store_id = require_store_id(current_user)
     sales = get_sales_in_range(db, today, end, store_id)
-
     total_amount = sum(float(s.total_amount) for s in sales)
     total_profit = sum(float(s.total_profit) for s in sales)
     item_count = sum(len(s.sale_items) for s in sales)
-
     return {
-        "date": date_obj.isoformat(),
+        "date": today.date().isoformat(),
         "total_sales": len(sales),
         "total_amount": round(total_amount, 2),
         "total_profit": round(total_profit, 2),
         "total_items": item_count,
         "sales": [s.to_dict() for s in sales],
     }
+
 
 @router.get("/weekly")
 def weekly_report(
@@ -250,7 +241,17 @@ def dashboard(
     db: Session = Depends(get_db),
 ):
     now = datetime.now()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Hari operasional berganti pukul 23.00 (hanya sementara)
+    operational_date = (now - timedelta(hours=23)).date()
+
+    # Awal hari operasional pukul 23.00 pada hari sebelumnya (hanya sementara)
+    today_start = datetime.combine(
+        operational_date - timedelta(days=1),
+        datetime.min.time(),
+    ).replace(hour=23)
+
+    # Akhir hari operasional pukul 23.00 pada tanggal laporan (hanya sementara)
     today_end = today_start + timedelta(days=1)
     store_id = require_store_id(current_user)
 
