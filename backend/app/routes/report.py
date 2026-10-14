@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Optional
 import uuid
 
@@ -15,7 +16,7 @@ from ..security import require_bos
 from ..tenancy import require_store_id
 
 router = APIRouter(prefix="/reports", tags=["reports"])
-
+WIB = ZoneInfo("Asia/Jakarta")
 
 def get_sales_in_range(db: Session, start, end, store_id):
     """Transaksi toko tertentu dalam rentang waktu.
@@ -24,11 +25,11 @@ def get_sales_in_range(db: Session, start, end, store_id):
     filter sehingga setiap laporan menjumlahkan omzet seluruh toko.
     """
     if end is None:
-        end = datetime.now()
+        end = datetime.now(WIB)
     return db.query(Sale).filter(
         Sale.store_id == store_id,
         Sale.created_at >= start,
-        Sale.created_at <= end,
+        Sale.created_at < end,
         Sale.status == "COMPLETED",
     ).all()
 
@@ -49,10 +50,10 @@ def daily_report(
     date_str: Optional[str] = None,
 ):
     if date_str:
-        date_obj = parse_date(date_str, datetime.now()).date()
+        date_obj = parse_date(date_str, datetime.now(WIB)).date()
         today = datetime.combine(date_obj, datetime.min.time())
     else:
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(WIB).replace(hour=0, minute=0, second=0, microsecond=0)
     end = today + timedelta(days=1)
     store_id = require_store_id(current_user)
     sales = get_sales_in_range(db, today, end, store_id)
@@ -75,7 +76,7 @@ def weekly_report(
     db: Session = Depends(get_db),
     date_str: Optional[str] = None,
 ):
-    today = parse_date(date_str, datetime.now()).date()
+    today = parse_date(date_str, datetime.now(WIB)).date()
     start = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time())
     end = start + timedelta(days=7)
     store_id = require_store_id(current_user)
@@ -102,7 +103,7 @@ def monthly_report(
         except Exception:
             raise HTTPException(status_code=400, detail="Format bulan salah (YYYY-MM)")
     else:
-        now = datetime.now()
+        now = datetime.now(WIB)
         start = datetime(now.year, now.month, 1)
     if start.month == 12:
         end = datetime(start.year + 1, 1, 1)
@@ -240,7 +241,7 @@ def dashboard(
     current_user: User = Depends(require_bos()),
     db: Session = Depends(get_db),
 ):
-    now = datetime.now()
+    now = datetime.now(WIB)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     store_id = require_store_id(current_user)
@@ -280,7 +281,7 @@ def dashboard(
             Product.store_id == store_id,
             Sale.store_id == store_id,
             Sale.created_at >= today_start,
-            Sale.created_at <= today_end,
+            Sale.created_at < today_end,
             Sale.status == "COMPLETED",
         )
         .group_by(SaleItem.product_id, Product.name)
