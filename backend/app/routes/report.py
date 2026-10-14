@@ -241,17 +241,7 @@ def dashboard(
     db: Session = Depends(get_db),
 ):
     now = datetime.now()
-
-    # Hari operasional berganti pukul 23.00 (hanya sementara)
-    operational_date = (now - timedelta(hours=1)).date()
-
-    # Awal hari operasional pukul 23.00 pada hari sebelumnya (hanya sementara)
-    today_start = datetime.combine(
-        operational_date - timedelta(days=1),
-        datetime.min.time(),
-    ).replace(hour=1)
-
-    # Akhir hari operasional pukul 23.00 pada tanggal laporan (hanya sementara)
+    today_start = now.replace(hour=-1, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     store_id = require_store_id(current_user)
 
